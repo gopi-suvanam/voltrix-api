@@ -1,0 +1,134 @@
+{
+  "metadata": {
+    "name": "Volatility",
+    "language_info": {
+      "name": "JavaScipt",
+      "version": "8.0"
+    }
+  },
+  "jsnbversion": "v0.1",
+  "cells": [
+    {
+      "code": "# QuantForge Tests - `/volatility`\n",
+      "status": "",
+      "output": "<h1>QuantForge Tests - <code>/volatility</code></h1>\n",
+      "type": "html"
+    },
+    {
+      "code": "const BASE = \"http://localhost:8000\";\n\nasync function post(path, body) {\n  const res = await fetch(`${BASE}${path}`, {\n    method: \"POST\",\n    headers: { \"Content-Type\": \"application/json\" },\n    body: JSON.stringify(body),\n  });\n  return res.json();\n}",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "---\n\n## 1. Implied Vol — Interactive\n\nEnter a market option price and recover the implied volatility.\n",
+      "status": "",
+      "output": "<hr>\n<h2>1. Implied Vol — Interactive</h2>\n<p>Enter a market option price and recover the implied volatility.</p>\n",
+      "type": "html"
+    },
+    {
+      "code": "//>html\n<div>\n  <label>Option Type\n    <select id=\"iv-type\">\n      <option value=\"call\">call</option>\n      <option value=\"put\">put</option>\n    </select>\n  </label>\n  <label>Vol Model\n    <select id=\"iv-model\">\n      <option value=\"log_normal\">log_normal (BS)</option>\n      <option value=\"normal\">normal (Bachelier)</option>\n    </select>\n  </label>\n  <label>Market Price <input id=\"iv-price\" type=\"number\" value=\"10.45\" step=\"0.1\"></label>\n  <label>Spot <input id=\"iv-spot\" type=\"number\" value=\"100\"></label>\n  <label>Strike <input id=\"iv-strike\" type=\"number\" value=\"100\"></label>\n  <label>Rate <input id=\"iv-rate\" type=\"number\" value=\"0.05\" step=\"0.01\"></label>\n  <label>Maturity <input id=\"iv-ttm\" type=\"number\" value=\"1.0\" step=\"0.25\"></label>\n  <label>Initial Guess <input id=\"iv-guess\" type=\"number\" value=\"0.2\" step=\"0.05\"></label>\n</div>",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "const result = await post(\"/volatility\", {\n  type:             \"implied\",\n  option_price:     parseFloat(document.getElementById(\"iv-price\").value),\n  option_type:      document.getElementById(\"iv-type\").value,\n  spot:             parseFloat(document.getElementById(\"iv-spot\").value),\n  strike:           parseFloat(document.getElementById(\"iv-strike\").value),\n  rate:             parseFloat(document.getElementById(\"iv-rate\").value),\n  time_to_maturity: parseFloat(document.getElementById(\"iv-ttm\").value),\n  vol_type:         document.getElementById(\"iv-model\").value,\n  initial_guess:    parseFloat(document.getElementById(\"iv-guess\").value),\n  tolerance: 1e-7,\n  max_iterations: 100,\n});\nscrib.show(\"Implied Vol: \" + result.volatility);\nscrib.show(result.convergence);\nscrib.show(result.insights);",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "---\n\n## 2. Round-Trip Check\n\nPrice an option at a known vol, then recover it via implied vol.\nRecovered value should match input exactly.\n",
+      "status": "",
+      "output": "<hr>\n<h2>2. Round-Trip Check</h2>\n<p>Price an option at a known vol, then recover it via implied vol.\nRecovered value should match input exactly.</p>\n",
+      "type": "html"
+    },
+    {
+      "code": "//>html\n<div>\n  <label>True σ <input id=\"rt-vol\" type=\"number\" value=\"0.2\" step=\"0.01\"></label>\n  <label>Spot <input id=\"rt-spot\" type=\"number\" value=\"100\"></label>\n  <label>Strike <input id=\"rt-strike\" type=\"number\" value=\"100\"></label>\n  <label>Maturity <input id=\"rt-ttm\" type=\"number\" value=\"1.0\" step=\"0.25\"></label>\n</div>",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "const trueVol = parseFloat(document.getElementById(\"rt-vol\").value);\nconst S       = parseFloat(document.getElementById(\"rt-spot\").value);\nconst K       = parseFloat(document.getElementById(\"rt-strike\").value);\nconst T       = parseFloat(document.getElementById(\"rt-ttm\").value);\n\nconst priced = await post(\"/option-price\", {\n  model: \"black_scholes\", option_type: \"call\",\n  spot: S, strike: K, rate: 0.05, time_to_maturity: T,\n  volatility: trueVol,\n});\nconst recovered = await post(\"/volatility\", {\n  type: \"implied\", option_price: priced.price, option_type: \"call\",\n  spot: S, strike: K, rate: 0.05, time_to_maturity: T,\n  vol_type: \"log_normal\", initial_guess: trueVol * 1.5,\n});\nscrib.show(\"Input σ:     \" + trueVol);\nscrib.show(\"Price:       \" + priced.price);\nscrib.show(\"Recovered σ: \" + recovered.volatility);\nscrib.show(\"Error:       \" + Math.abs(recovered.volatility - trueVol).toExponential(3));\nscrib.show(\"Iterations:  \" + recovered.convergence.iterations);",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "---\n\n## 3. Implied Vol Smile Builder\n\nPrice calls at multiple strikes with a flat vol, recover IV at each.\nFlat input → flat smile (all IVs equal input vol).\n",
+      "status": "",
+      "output": "<hr>\n<h2>3. Implied Vol Smile Builder</h2>\n<p>Price calls at multiple strikes with a flat vol, recover IV at each.\nFlat input → flat smile (all IVs equal input vol).</p>\n",
+      "type": "html"
+    },
+    {
+      "code": "//>html\n<div>\n  <label>Flat σ <input id=\"sm-vol\" type=\"number\" value=\"0.2\" step=\"0.01\"></label>\n  <label>Spot <input id=\"sm-spot\" type=\"number\" value=\"100\"></label>\n  <label>Maturity <input id=\"sm-ttm\" type=\"number\" value=\"1.0\" step=\"0.25\"></label>\n</div>",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "const vol  = parseFloat(document.getElementById(\"sm-vol\").value);\nconst spot = parseFloat(document.getElementById(\"sm-spot\").value);\nconst T    = parseFloat(document.getElementById(\"sm-ttm\").value);\n\nconst strikes = [80, 85, 90, 95, 100, 105, 110, 115, 120];\n\nconst prices = await Promise.all(strikes.map(K =>\n  post(\"/option-price\", {\n    model: \"black_scholes\", option_type: \"call\",\n    spot, strike: K, rate: 0.05, time_to_maturity: T, volatility: vol,\n  })\n));\nconst ivs = await Promise.all(strikes.map((K, i) =>\n  post(\"/volatility\", {\n    type: \"implied\", option_price: prices[i].price, option_type: \"call\",\n    spot, strike: K, rate: 0.05, time_to_maturity: T,\n    vol_type: \"log_normal\",\n  })\n));\nscrib.show(\"Strike | Price    | Implied σ\");\nstrikes.forEach((K, i) =>\n  scrib.show(\"  \" + String(K).padStart(3) + \"  | \" + prices[i].price.toFixed(5) + \" | \" + ivs[i].volatility.toFixed(6))\n);",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "---\n\n## 4. Historical Vol — Interactive\n\nEnter a comma-separated price series to compute annualised volatility.\n",
+      "status": "",
+      "output": "<hr>\n<h2>4. Historical Vol — Interactive</h2>\n<p>Enter a comma-separated price series to compute annualised volatility.</p>\n",
+      "type": "html"
+    },
+    {
+      "code": "//>html\n<div>\n  <label>Price Series (comma-separated)<br>\n    <input id=\"hv-prices\" type=\"text\" value=\"100,102,101,105,107,104,108,110,109,112\">\n  </label>\n  <label>Method\n    <select id=\"hv-method\">\n      <option value=\"log_returns\">log_returns</option>\n      <option value=\"simple_returns\">simple_returns</option>\n    </select>\n  </label>\n  <label>Ann. Factor <input id=\"hv-ann\" type=\"number\" value=\"252\"></label>\n  <label>Window (blank = all) <input id=\"hv-window\" type=\"text\" value=\"\" placeholder=\"all\"></label>\n</div>",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "const raw    = document.getElementById(\"hv-prices\").value;\nconst prices = raw.split(\",\").map(s => parseFloat(s.trim())).filter(n => !isNaN(n));\nconst win    = document.getElementById(\"hv-window\").value.trim();\n\nconst result = await post(\"/volatility\", {\n  type:                 \"historical\",\n  prices,\n  method:               document.getElementById(\"hv-method\").value,\n  annualization_factor: parseInt(document.getElementById(\"hv-ann\").value),\n  ...(win ? { window: parseInt(win) } : {}),\n});\nscrib.show(\"Prices used: \" + prices.length);\nscrib.show(\"Annualised Vol: \" + result.volatility);\nscrib.show(result.insights);",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "---\n\n## 5. Full vs Rolling Window Comparison\n",
+      "status": "",
+      "output": "<hr>\n<h2>5. Full vs Rolling Window Comparison</h2>\n",
+      "type": "html"
+    },
+    {
+      "code": "//>html\n<div>\n  <label>Window Size <input id=\"rw-win\" type=\"number\" value=\"5\" min=\"2\"></label>\n</div>",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "const prices = [100, 98, 102, 99, 103, 101, 105, 108, 106, 110, 115, 112];\nconst window = parseInt(document.getElementById(\"rw-win\").value);\n\nconst [full, rolling] = await Promise.all([\n  post(\"/volatility\", { type:\"historical\", prices, method:\"log_returns\", annualization_factor:252 }),\n  post(\"/volatility\", { type:\"historical\", prices, method:\"log_returns\", annualization_factor:252, window }),\n]);\nscrib.show(\"Full series vol (\" + (prices.length - 1) + \" returns): \" + full.volatility);\nscrib.show(\"Rolling \" + window + \"-period vol: \" + rolling.volatility);",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "---\n\n## 6. Error — Price Below Intrinsic\n",
+      "status": "",
+      "output": "<hr>\n<h2>6. Error — Price Below Intrinsic</h2>\n",
+      "type": "html"
+    },
+    {
+      "code": "//>html\n<div>\n  <label>Option Price <input id=\"err-price\" type=\"number\" value=\"0.001\" step=\"0.1\"></label>\n  <label>Spot <input id=\"err-spot\" type=\"number\" value=\"100\"></label>\n  <label>Strike <input id=\"err-strike\" type=\"number\" value=\"50\"></label>\n</div>",
+      "status": "",
+      "output": "",
+      "type": "code"
+    },
+    {
+      "code": "const result = await post(\"/volatility\", {\n  type: \"implied\",\n  option_price: parseFloat(document.getElementById(\"err-price\").value),\n  option_type:  \"call\",\n  spot:         parseFloat(document.getElementById(\"err-spot\").value),\n  strike:       parseFloat(document.getElementById(\"err-strike\").value),\n  rate: 0.05, time_to_maturity: 1.0,\n  vol_type: \"log_normal\",\n});\nscrib.show(result);",
+      "status": "",
+      "output": "",
+      "type": "code"
+    }
+  ],
+  "source": "https://github.com/gopi-suvanam/scribbler",
+  "run_on_load": false
+}
