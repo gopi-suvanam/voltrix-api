@@ -1,23 +1,38 @@
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class VolData(BaseModel):
     # Constant surface
-    vol: Optional[float] = None
+    vol: Optional[float] = Field(None, description="Constant volatility value (e.g. `0.2` for 20%). Required when `surface_type='constant'`.")
     # Matrix surface
-    strikes: Optional[list[float]] = None
-    maturities: Optional[list[float]] = None
-    vol_matrix: Optional[list[list[float]]] = None
+    strikes: Optional[list[float]] = Field(None, description="Ordered strike levels for the vol matrix. Required when `surface_type='matrix'`.")
+    maturities: Optional[list[float]] = Field(None, description="Ordered maturities (in years) for the vol matrix. Required when `surface_type='matrix'`.")
+    vol_matrix: Optional[list[list[float]]] = Field(
+        None,
+        description=(
+            "2-D vol surface: `vol_matrix[i][j]` is the vol at `strikes[i]` and `maturities[j]`. "
+            "Shape must be `len(strikes) × len(maturities)`."
+        ),
+    )
 
 
 class VolatilityInput(BaseModel):
-    vol_type: Literal["log_normal", "normal", "cev"] = "log_normal"
-    surface_type: Literal["constant", "matrix"] = "constant"
-    data: VolData
-    interpolation: Literal["bilinear"] = "bilinear"
-    extrapolation: Literal["flat"] = "flat"
-    other_params: dict[str, Any] = {}
+    vol_type: Literal["log_normal", "normal", "cev"] = Field(
+        "log_normal",
+        description="Volatility convention: `log_normal` (Black-Scholes), `normal` (Bachelier), or `cev`.",
+    )
+    surface_type: Literal["constant", "matrix"] = Field(
+        "constant",
+        description="`constant` uses a single scalar vol; `matrix` uses a bilinear-interpolated vol surface.",
+    )
+    data: VolData = Field(..., description="Volatility data payload — contents depend on `surface_type`.")
+    interpolation: Literal["bilinear"] = Field("bilinear", description="Interpolation method for matrix surfaces.")
+    extrapolation: Literal["flat"] = Field("flat", description="Extrapolation rule outside the surface bounds.")
+    other_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Model-specific parameters. CEV model accepts `cev_beta` (elasticity, 0–1; default 1.0).",
+    )
 
     @model_validator(mode="after")
     def _validate_data(self):

@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     # Leave empty to disable auth (development only).
     api_token_hash: str = ""
 
+    api_version: str = "v2"
+
     model_config = {"env_file": "config.env", "env_file_encoding": "utf-8"}
 
 

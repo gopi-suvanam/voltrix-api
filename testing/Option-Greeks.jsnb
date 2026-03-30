@@ -1,109 +1,23 @@
 {
-  "metadata": {
-    "name": "Option Greeks",
-    "language_info": {
-      "name": "JavaScipt",
-      "version": "8.0"
-    }
-  },
+  "metadata": { "name": "Option Greeks", "language_info": { "name": "JavaScipt", "version": "8.0" } },
   "jsnbversion": "v0.1",
   "cells": [
-    {
-      "code": "# QuantForge Tetsts - `/greeks` \n",
-      "status": "",
-      "output": "<h1>QuantForge Tetsts - <code>/greeks</code></h1>\n",
-      "type": "html"
-    },
-    {
-      "code": "const BASE = \"http://localhost:8000\";\n\nasync function post(path, body) {\n  const res = await fetch(`${BASE}${path}`, {\n    method: \"POST\",\n    headers: { \"Content-Type\": \"application/json\" },\n    body: JSON.stringify(body),\n  });\n  return res.json();\n}",
-      "status": "[1]<br><span style=\"font-size:8px\">0ms<span></span></span>",
-      "output": "",
-      "type": "code"
-    },
-    {
-      "code": "---\n\n## 1. Analytical Greeks — Interactive\n",
-      "status": "",
-      "output": "<hr>\n<h2>1. Analytical Greeks — Interactive</h2>\n",
-      "type": "html"
-    },
-    {
-      "code": "//>html\n<div>\n  <label>Option Type\n    <select id=\"gk-type\">\n      <option value=\"call\">call</option>\n      <option value=\"put\">put</option>\n    </select>\n  </label>\n  <label>Method\n    <select id=\"gk-method\">\n      <option value=\"analytic\">analytic</option>\n      <option value=\"finite_difference\">finite_difference</option>\n    </select>\n  </label>\n  <label>Spot <input id=\"gk-spot\" type=\"number\" value=\"100\"></label>\n  <label>Strike <input id=\"gk-strike\" type=\"number\" value=\"100\"></label>\n  <label>Rate <input id=\"gk-rate\" type=\"number\" value=\"0.05\" step=\"0.01\"></label>\n  <label>Maturity <input id=\"gk-ttm\" type=\"number\" value=\"1.0\" step=\"0.25\"></label>\n  <label>Vol (σ) <input id=\"gk-vol\" type=\"number\" value=\"0.2\" step=\"0.01\"></label>\n  <label>Bump Size <input id=\"gk-bump\" type=\"number\" value=\"0.01\" step=\"0.005\"></label>\n</div>",
-      "status": "[2]<br><span style=\"font-size:8px\">0ms<span></span></span>",
-      "output": "\n<div>\n  <label>Option Type\n    <select id=\"gk-type\">\n      <option value=\"call\">call</option>\n      <option value=\"put\">put</option>\n    </select>\n  </label>\n  <label>Method\n    <select id=\"gk-method\">\n      <option value=\"analytic\">analytic</option>\n      <option value=\"finite_difference\">finite_difference</option>\n    </select>\n  </label>\n  <label>Spot <input id=\"gk-spot\" type=\"number\" value=\"100\"></label>\n  <label>Strike <input id=\"gk-strike\" type=\"number\" value=\"100\"></label>\n  <label>Rate <input id=\"gk-rate\" type=\"number\" value=\"0.05\" step=\"0.01\"></label>\n  <label>Maturity <input id=\"gk-ttm\" type=\"number\" value=\"1.0\" step=\"0.25\"></label>\n  <label>Vol (σ) <input id=\"gk-vol\" type=\"number\" value=\"0.2\" step=\"0.01\"></label>\n  <label>Bump Size <input id=\"gk-bump\" type=\"number\" value=\"0.01\" step=\"0.005\"></label>\n</div> <br>",
-      "type": "code"
-    },
-    {
-      "code": "const result = await post(\"/greeks\", {\n  model: \"black_scholes\",\n  option_type:      document.getElementById(\"gk-type\").value,\n  spot:             parseFloat(document.getElementById(\"gk-spot\").value),\n  strike:           parseFloat(document.getElementById(\"gk-strike\").value),\n  rate:             parseFloat(document.getElementById(\"gk-rate\").value),\n  time_to_maturity: parseFloat(document.getElementById(\"gk-ttm\").value),\n  volatility:       parseFloat(document.getElementById(\"gk-vol\").value),\n  method:           document.getElementById(\"gk-method\").value,\n  bump_size:        parseFloat(document.getElementById(\"gk-bump\").value),\n  include_insights: true,\n});\nscrib.show(\"Δ delta:  \" + result.delta);\nscrib.show(\"Γ gamma:  \" + result.gamma);\nscrib.show(\"ν vega:   \" + result.vega + \"  (\" + result.units.vega + \")\");\nscrib.show(\"Θ theta:  \" + result.theta + \"  (\" + result.units.theta + \")\");\nscrib.show(\"ρ rho:    \" + result.rho);\nscrib.show(result.interpretation);",
-      "status": "[3]<br><span style=\"font-size:8px\">313ms<span></span></span>",
-      "output": "Δ delta:  0.636831 <br>Γ gamma:  0.018762 <br>ν vega:   0.37524  (per 1% vol change) <br>Θ theta:  -0.017573  (per day decay) <br>ρ rho:    0.532325 <br>{\n  \"delta\": \"High directional exposure\",\n  \"vega\": \"Highly sensitive to volatility\",\n  \"theta\": \"Time decay moderate\"\n} <br>",
-      "type": "code"
-    },
-    {
-      "code": "---\n\n## 2. Analytic vs Finite Difference Comparison\n",
-      "status": "",
-      "output": "<hr>\n<h2>2. Analytic vs Finite Difference Comparison</h2>\n",
-      "type": "html"
-    },
-    {
-      "code": "//>html\n<div>\n  <label>Spot <input id=\"cmp-spot\" type=\"number\" value=\"100\"></label>\n  <label>Strike <input id=\"cmp-strike\" type=\"number\" value=\"105\"></label>\n  <label>Vol <input id=\"cmp-vol\" type=\"number\" value=\"0.2\" step=\"0.01\"></label>\n  <label>Maturity <input id=\"cmp-ttm\" type=\"number\" value=\"1.0\" step=\"0.25\"></label>\n</div>",
-      "status": "[4]<br><span style=\"font-size:8px\">0ms<span></span></span>",
-      "output": "\n<div>\n  <label>Spot <input id=\"cmp-spot\" type=\"number\" value=\"100\"></label>\n  <label>Strike <input id=\"cmp-strike\" type=\"number\" value=\"105\"></label>\n  <label>Vol <input id=\"cmp-vol\" type=\"number\" value=\"0.2\" step=\"0.01\"></label>\n  <label>Maturity <input id=\"cmp-ttm\" type=\"number\" value=\"1.0\" step=\"0.25\"></label>\n</div> <br>",
-      "type": "code"
-    },
-    {
-      "code": "const shared = {\n  model: \"black_scholes\", option_type: \"call\", rate: 0.05,\n  spot:             parseFloat(document.getElementById(\"cmp-spot\").value),\n  strike:           parseFloat(document.getElementById(\"cmp-strike\").value),\n  volatility:       parseFloat(document.getElementById(\"cmp-vol\").value),\n  time_to_maturity: parseFloat(document.getElementById(\"cmp-ttm\").value),\n};\n\nconst [analytic, numerical] = await Promise.all([\n  post(\"/greeks\", { ...shared, method: \"analytic\" }),\n  post(\"/greeks\", { ...shared, method: \"finite_difference\", bump_size: 0.01 }),\n]);\n\nscrib.show(\"Greek  | Analytic     | Numerical    | Diff\");\n[\"delta\",\"gamma\",\"vega\",\"theta\",\"rho\"].forEach(g => {\n  const diff = Math.abs(analytic[g] - numerical[g]);\n  scrib.show(g.padEnd(6) + \" | \" + String(analytic[g]).padEnd(12) + \" | \" + String(numerical[g]).padEnd(12) + \" | \" + diff.toFixed(7));\n});",
-      "status": "[5]<br><span style=\"font-size:8px\">9ms<span></span></span>",
-      "output": "Greek  | Analytic     | Numerical    | Diff <br>delta  | 0.542228     | 0.542178     | 0.0000500 <br>gamma  | 0.019835     | 0.019832     | 0.0000030 <br>vega   | 0.396705     | 0.396704     | 0.0000010 <br>theta  | -0.017198    | -0.017204    | 0.0000060 <br>rho    | 0.462015     | 0.461972     | 0.0000430 <br>",
-      "type": "code"
-    },
-    {
-      "code": "---\n\n## 3. Put-Call Parity on Greeks\n\nΔ(call) − Δ(put) = e^(−qT) ≈ 1 for q=0.\nΓ and ν must be identical for call and put.\n",
-      "status": "",
-      "output": "<hr>\n<h2>3. Put-Call Parity on Greeks</h2>\n<p>Δ(call) − Δ(put) = e^(−qT) ≈ 1 for q=0.\nΓ and ν must be identical for call and put.</p>\n",
-      "type": "html"
-    },
-    {
-      "code": "const S = parseFloat(document.getElementById(\"cmp-spot\").value);\nconst K = parseFloat(document.getElementById(\"cmp-strike\").value);\nconst v = parseFloat(document.getElementById(\"cmp-vol\").value);\nconst T = parseFloat(document.getElementById(\"cmp-ttm\").value);\n\nconst [call, put] = await Promise.all([\n  post(\"/greeks\", { model:\"black_scholes\", option_type:\"call\", spot:S, strike:K, rate:0.05, time_to_maturity:T, volatility:v, method:\"analytic\" }),\n  post(\"/greeks\", { model:\"black_scholes\", option_type:\"put\",  spot:S, strike:K, rate:0.05, time_to_maturity:T, volatility:v, method:\"analytic\" }),\n]);\nscrib.show(\"Δ(call) − Δ(put): \" + (call.delta - put.delta).toFixed(6) + \"  (expect ≈ 1.0)\");\nscrib.show(\"Γ equal: \" + (call.gamma === put.gamma) + \"  \" + call.gamma);\nscrib.show(\"ν equal: \" + (call.vega  === put.vega)  + \"  \" + call.vega);",
-      "status": "[6]<br><span style=\"font-size:8px\">8ms<span></span></span>",
-      "output": "Δ(call) − Δ(put): 1.000000  (expect ≈ 1.0) <br>Γ equal: true  0.019835 <br>ν equal: true  0.396705 <br>",
-      "type": "code"
-    },
-    {
-      "code": "---\n\n## 4. Greeks with Vol Surface\n\nSurface triggers automatic finite-difference computation.\n",
-      "status": "",
-      "output": "<hr>\n<h2>4. Greeks with Vol Surface</h2>\n<p>Surface triggers automatic finite-difference computation.</p>\n",
-      "type": "html"
-    },
-    {
-      "code": "//>html\n<div>\n  <label>Query Strike <input id=\"surf-gk-k\" type=\"number\" value=\"100\"></label>\n  <label>Query Maturity <input id=\"surf-gk-t\" type=\"number\" value=\"0.75\" step=\"0.25\"></label>\n</div>",
-      "status": "[7]<br><span style=\"font-size:8px\">0ms<span></span></span>",
-      "output": "\n<div>\n  <label>Query Strike <input id=\"surf-gk-k\" type=\"number\" value=\"100\"></label>\n  <label>Query Maturity <input id=\"surf-gk-t\" type=\"number\" value=\"0.75\" step=\"0.25\"></label>\n</div> <br>",
-      "type": "code"
-    },
-    {
-      "code": "const result = await post(\"/greeks\", {\n  model: \"black_scholes\", option_type: \"call\",\n  spot: 100,\n  strike:           parseFloat(document.getElementById(\"surf-gk-k\").value),\n  rate: 0.05,\n  time_to_maturity: parseFloat(document.getElementById(\"surf-gk-t\").value),\n  volatility: {\n    surface_type: \"matrix\",\n    data: {\n      strikes:    [90, 100, 110],\n      maturities: [0.5, 1.0],\n      vol_matrix: [[0.25, 0.24], [0.20, 0.19], [0.22, 0.21]],\n    },\n    interpolation: \"bilinear\",\n    extrapolation: \"flat\",\n  },\n  method: \"analytic\",\n  include_insights: true,\n});\nscrib.show(result);\nscrib.show(\"σ interpolated: \" + result.volatility_used.value + \" from \" + result.volatility_used.source);",
-      "status": "[8]<br><span style=\"font-size:8px\">4ms<span></span></span>",
-      "output": "{\n  \"delta\": 0.620281,\n  \"gamma\": 0.022535,\n  \"vega\": 0.329619,\n  \"theta\": -0.019072,\n  \"rho\": 0.400694,\n  \"units\": {\n    \"vega\": \"per 1% vol change\",\n    \"theta\": \"per day decay\"\n  },\n  \"volatility_used\": {\n    \"value\": 0.195,\n    \"source\": \"interpolated\",\n    \"surface_type\": \"matrix\"\n  },\n  \"interpretation\": {\n    \"delta\": \"High directional exposure\",\n    \"vega\": \"Highly sensitive to volatility\",\n    \"theta\": \"Time decay moderate\"\n  }\n} <br>σ interpolated: 0.195 from interpolated <br>",
-      "type": "code"
-    },
-    {
-      "code": "---\n\n## 5. Delta vs Spot — Sensitivity Curve\n\nSweep spot from 70 to 130 and observe how delta and gamma evolve.\n",
-      "status": "",
-      "output": "<hr>\n<h2>5. Delta vs Spot — Sensitivity Curve</h2>\n<p>Sweep spot from 70 to 130 and observe how delta and gamma evolve.</p>\n",
-      "type": "html"
-    },
-    {
-      "code": "//>html\n<div>\n  <label>Strike <input id=\"dlt-k\" type=\"number\" value=\"100\"></label>\n  <label>Vol <input id=\"dlt-vol\" type=\"number\" value=\"0.2\" step=\"0.01\"></label>\n  <label>Maturity <input id=\"dlt-ttm\" type=\"number\" value=\"1.0\" step=\"0.25\"></label>\n</div>",
-      "status": "[9]<br><span style=\"font-size:8px\">0ms<span></span></span>",
-      "output": "\n<div>\n  <label>Strike <input id=\"dlt-k\" type=\"number\" value=\"100\"></label>\n  <label>Vol <input id=\"dlt-vol\" type=\"number\" value=\"0.2\" step=\"0.01\"></label>\n  <label>Maturity <input id=\"dlt-ttm\" type=\"number\" value=\"1.0\" step=\"0.25\"></label>\n</div> <br>",
-      "type": "code"
-    },
-    {
-      "code": "const K   = parseFloat(document.getElementById(\"dlt-k\").value);\nconst vol = parseFloat(document.getElementById(\"dlt-vol\").value);\nconst T   = parseFloat(document.getElementById(\"dlt-ttm\").value);\n\nconst spots = [70, 80, 90, 95, 100, 105, 110, 120, 130];\nconst results = await Promise.all(spots.map(S =>\n  post(\"/greeks\", {\n    model: \"black_scholes\", option_type: \"call\",\n    spot: S, strike: K, rate: 0.05, time_to_maturity: T,\n    volatility: vol, method: \"analytic\",\n  })\n));\nscrib.show(\"Spot | Delta  | Gamma\");\nspots.forEach((S, i) =>\n  scrib.show(S.toString().padStart(4) + \" | \" + results[i].delta.toFixed(4) + \" | \" + results[i].gamma.toFixed(5))\n);",
-      "status": "[10]<br><span style=\"font-size:8px\">17ms<span></span></span>",
-      "output": "Spot | Delta  | Gamma <br>  70 | 0.0759 | 0.01020 <br>  80 | 0.2219 | 0.01860 <br>  90 | 0.4298 | 0.02182 <br>  95 | 0.5373 | 0.02090 <br> 100 | 0.6368 | 0.01876 <br> 105 | 0.7237 | 0.01593 <br> 110 | 0.7958 | 0.01289 <br> 120 | 0.8965 | 0.00750 <br> 130 | 0.9517 | 0.00386 <br>",
-      "type": "code"
-    }
+    { "code": "# Voltrix Tests — `/options/greeks`\n", "status": "", "output": "<h1>Voltrix Tests — <code>/options/greeks</code></h1>\n", "type": "html" },
+    { "code": "const BASE = 'http://localhost:8000/v2';\n\nasync function post(path, body) {\n  const res = await fetch(`${BASE}${path}`, {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(body),\n  });\n  return res.json();\n}", "status": "", "output": "", "type": "code" },
+    { "code": "---\n\n## 1. Analytical Greeks — Interactive\n", "status": "", "output": "<hr>\n<h2>1. Analytical Greeks — Interactive</h2>\n", "type": "html" },
+    { "code": "//>html\n<div>\n  <label>Type <select id='gk-type'><option value='call'>call</option><option value='put'>put</option></select></label>\n  <label>Method <select id='gk-method'><option value='analytic'>analytic</option><option value='finite_difference'>finite_difference</option></select></label>\n  <label>Spot <input id='gk-spot' type='number' value='100'></label>\n  <label>Strike <input id='gk-strike' type='number' value='100'></label>\n  <label>Rate <input id='gk-rate' type='number' value='0.05' step='0.01'></label>\n  <label>Settlement Date <input id='gk-settle' type='date' value='2026-01-01'></label>\n  <label>Expiry Date <input id='gk-expiry' type='date' value='2027-01-01'></label>\n  <label>Vol (σ) <input id='gk-vol' type='number' value='0.2' step='0.01'></label>\n  <label>Bump Size <input id='gk-bump' type='number' value='0.01' step='0.005'></label>\n</div>", "status": "", "output": "", "type": "code" },
+    { "code": "const result = await post('/options/greeks', {\n  model: 'black_scholes',\n  option_type:     document.getElementById('gk-type').value,\n  spot:            parseFloat(document.getElementById('gk-spot').value),\n  strike:          parseFloat(document.getElementById('gk-strike').value),\n  rate:            parseFloat(document.getElementById('gk-rate').value),\n  settlement_date: document.getElementById('gk-settle').value,\n  expiry_date:     document.getElementById('gk-expiry').value,\n  volatility:      parseFloat(document.getElementById('gk-vol').value),\n  method:          document.getElementById('gk-method').value,\n  bump_size:       parseFloat(document.getElementById('gk-bump').value),\n  include_insights: true,\n});\nscrib.show('Δ delta:  ' + result.delta);\nscrib.show('Γ gamma:  ' + result.gamma);\nscrib.show('ν vega:   ' + result.vega  + '  (' + result.units.vega + ')');\nscrib.show('Θ theta:  ' + result.theta + '  (' + result.units.theta + ')');\nscrib.show('ρ rho:    ' + result.rho);\nscrib.show(result.interpretation);", "status": "", "output": "", "type": "code" },
+    { "code": "---\n\n## 2. Analytic vs Finite Difference Comparison\n", "status": "", "output": "<hr>\n<h2>2. Analytic vs Finite Difference Comparison</h2>\n", "type": "html" },
+    { "code": "//>html\n<div>\n  <label>Spot <input id='cmp-spot' type='number' value='100'></label>\n  <label>Strike <input id='cmp-strike' type='number' value='105'></label>\n  <label>Vol <input id='cmp-vol' type='number' value='0.2' step='0.01'></label>\n  <label>Settlement Date <input id='cmp-settle' type='date' value='2026-01-01'></label>\n  <label>Expiry Date <input id='cmp-expiry' type='date' value='2027-01-01'></label>\n</div>", "status": "", "output": "", "type": "code" },
+    { "code": "const shared = {\n  model: 'black_scholes', option_type: 'call', rate: 0.05,\n  spot:            parseFloat(document.getElementById('cmp-spot').value),\n  strike:          parseFloat(document.getElementById('cmp-strike').value),\n  volatility:      parseFloat(document.getElementById('cmp-vol').value),\n  settlement_date: document.getElementById('cmp-settle').value,\n  expiry_date:     document.getElementById('cmp-expiry').value,\n};\nconst [analytic, numerical] = await Promise.all([\n  post('/options/greeks', { ...shared, method: 'analytic' }),\n  post('/options/greeks', { ...shared, method: 'finite_difference', bump_size: 0.01 }),\n]);\nscrib.show('Greek  | Analytic     | Numerical    | Diff');\n['delta','gamma','vega','theta','rho'].forEach(g => {\n  const diff = Math.abs(analytic[g] - numerical[g]);\n  scrib.show(g.padEnd(6) + ' | ' + String(analytic[g]).padEnd(12) + ' | ' + String(numerical[g]).padEnd(12) + ' | ' + diff.toFixed(7));\n});", "status": "", "output": "", "type": "code" },
+    { "code": "---\n\n## 3. Put-Call Parity on Greeks\n\nΔ(call) − Δ(put) = e^(−qT) ≈ 1 for q=0. Γ and ν must be identical for call and put.\n", "status": "", "output": "<hr>\n<h2>3. Put-Call Parity on Greeks</h2>\n<p>Δ(call) − Δ(put) = e^(−qT) ≈ 1 for q=0. Γ and ν must be identical for call and put.</p>\n", "type": "html" },
+    { "code": "const S = parseFloat(document.getElementById('cmp-spot').value);\nconst K = parseFloat(document.getElementById('cmp-strike').value);\nconst v = parseFloat(document.getElementById('cmp-vol').value);\nconst settle = document.getElementById('cmp-settle').value;\nconst expiry = document.getElementById('cmp-expiry').value;\n\nconst base = { model: 'black_scholes', rate: 0.05, spot: S, strike: K,\n               volatility: v, settlement_date: settle, expiry_date: expiry, method: 'analytic' };\nconst [call, put] = await Promise.all([\n  post('/options/greeks', { ...base, option_type: 'call' }),\n  post('/options/greeks', { ...base, option_type: 'put' }),\n]);\nscrib.show('Δ(call) − Δ(put): ' + (call.delta - put.delta).toFixed(6) + '  (expect ≈ 1.0)');\nscrib.show('Γ equal: ' + (call.gamma === put.gamma) + '  ' + call.gamma);\nscrib.show('ν equal: ' + (call.vega  === put.vega)  + '  ' + call.vega);", "status": "", "output": "", "type": "code" },
+    { "code": "---\n\n## 4. Greeks with Vol Surface\n\nA matrix vol surface forces automatic finite-difference computation.\n", "status": "", "output": "<hr>\n<h2>4. Greeks with Vol Surface</h2>\n<p>A matrix vol surface forces automatic finite-difference computation.</p>\n", "type": "html" },
+    { "code": "//>html\n<div>\n  <label>Query Strike <input id='surf-gk-k' type='number' value='100'></label>\n  <label>Settlement Date <input id='surf-gk-settle' type='date' value='2026-01-01'></label>\n  <label>Expiry Date <input id='surf-gk-expiry' type='date' value='2026-10-01'></label>\n</div>", "status": "", "output": "", "type": "code" },
+    { "code": "const result = await post('/options/greeks', {\n  model: 'black_scholes', option_type: 'call', spot: 100, rate: 0.05,\n  strike:          parseFloat(document.getElementById('surf-gk-k').value),\n  settlement_date: document.getElementById('surf-gk-settle').value,\n  expiry_date:     document.getElementById('surf-gk-expiry').value,\n  volatility: {\n    surface_type: 'matrix',\n    data: {\n      strikes: [90, 100, 110], maturities: [0.5, 1.0],\n      vol_matrix: [[0.25, 0.24], [0.20, 0.19], [0.22, 0.21]],\n    },\n    interpolation: 'bilinear', extrapolation: 'flat',\n  },\n  method: 'analytic', include_insights: true,\n});\nscrib.show(result);\nscrib.show('σ interpolated: ' + result.volatility_used.value + ' from ' + result.volatility_used.source);", "status": "", "output": "", "type": "code" },
+    { "code": "---\n\n## 5. Delta vs Spot — Sensitivity Curve\n\nSweep spot from 70 to 130 and observe how delta and gamma evolve.\n", "status": "", "output": "<hr>\n<h2>5. Delta vs Spot — Sensitivity Curve</h2>\n<p>Sweep spot from 70 to 130 and observe how delta and gamma evolve.</p>\n", "type": "html" },
+    { "code": "//>html\n<div>\n  <label>Strike <input id='dlt-k' type='number' value='100'></label>\n  <label>Vol <input id='dlt-vol' type='number' value='0.2' step='0.01'></label>\n  <label>Settlement Date <input id='dlt-settle' type='date' value='2026-01-01'></label>\n  <label>Expiry Date <input id='dlt-expiry' type='date' value='2027-01-01'></label>\n</div>", "status": "", "output": "", "type": "code" },
+    { "code": "const K      = parseFloat(document.getElementById('dlt-k').value);\nconst vol    = parseFloat(document.getElementById('dlt-vol').value);\nconst settle = document.getElementById('dlt-settle').value;\nconst expiry = document.getElementById('dlt-expiry').value;\n\nconst spots = [70, 80, 90, 95, 100, 105, 110, 120, 130];\nconst results = await Promise.all(spots.map(S =>\n  post('/options/greeks', {\n    model: 'black_scholes', option_type: 'call',\n    spot: S, strike: K, rate: 0.05,\n    settlement_date: settle, expiry_date: expiry,\n    volatility: vol, method: 'analytic',\n  })\n));\nscrib.show('Spot | Delta  | Gamma');\nspots.forEach((S, i) =>\n  scrib.show(S.toString().padStart(4) + ' | ' + results[i].delta.toFixed(4) + ' | ' + results[i].gamma.toFixed(5))\n);", "status": "", "output": "", "type": "code" }
   ],
   "source": "https://github.com/gopi-suvanam/scribbler",
   "run_on_load": false

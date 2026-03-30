@@ -1,4 +1,4 @@
-# QuantForge API
+# Voltrix API
 
 A quantitative finance computation engine exposed as a REST API. Built with FastAPI.
 
@@ -231,7 +231,7 @@ All errors follow a consistent structure:
 ## Project Structure
 
 ```
-quantforge-api/
+voltrix-api/
 ├── main.py                   # App entry point, error handlers
 ├── requirements.txt
 ├── app/
