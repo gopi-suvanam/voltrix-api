@@ -6,12 +6,20 @@ A quantitative finance computation engine exposed as a REST API. Built with Fast
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/option-price` | Price options (BS, Bachelier, CEV, Monte Carlo) |
-| POST | `/greeks` | Compute option Greeks (analytic or finite difference) |
-| POST | `/volatility` | Implied vol (Newton-Raphson) or historical vol |
-| GET | `/health` | Health check |
+| POST | `/v2/options/price` | Price options (BS, Bachelier, CEV, Monte Carlo, Heston) |
+| POST | `/v2/options/greeks` | Compute option Greeks (analytic or finite-difference) |
+| POST | `/v2/options/volatility` | Implied vol (Newton-Raphson) or historical vol |
+| POST | `/v2/options/strategies` | Multi-leg strategy payoff analysis |
+| POST | `/v2/bonds/price` | Bond dirty/clean price from YTM |
+| POST | `/v2/bonds/yield` | YTM from clean price |
+| POST | `/v2/bonds/sensitivity` | Duration and convexity |
+| POST | `/v2/core/npv` | Discounted cashflow NPV |
+| POST | `/v2/core/pmt` | Periodic loan payment |
+| GET  | `/health` | Health check |
 
-Interactive docs available at `http://localhost:8000/docs` once the server is running.
+Interactive docs: `http://localhost:8000/docs` (Swagger) · `http://localhost:8000/redoc`
+
+Full reference: [`docs.md`](docs.md)
 
 ---
 
@@ -32,38 +40,33 @@ uvicorn main:app --reload
 
 ---
 
-## Supported Models
+## Supported Pricing Models
 
-| Model | Key | Notes |
-|-------|-----|-------|
-| Black-Scholes | `black_scholes` | Log-normal, analytical |
-| Bachelier | `bachelier` | Normal model, analytical |
-| CEV | `cev` | Monte Carlo with time-stepping |
-| Monte Carlo | `monte_carlo` | Exact GBM simulation |
+| Model | Key | Method | Notes |
+|-------|-----|--------|-------|
+| Black-Scholes | `black_scholes` | Analytic | Log-normal; analytic Greeks |
+| Bachelier | `bachelier` | Analytic | Normal model |
+| CEV | `cev` | Monte Carlo | `dS = (r−q)S dt + σSᵝ dW`; set `cev_beta` in `other_params` |
+| GBM Monte Carlo | `monte_carlo` | Monte Carlo | Exact GBM simulation |
+| Heston | `heston` | Semi-analytic / MC | Stochastic variance; requires Heston surface params |
 
-## Volatility Input
+---
 
-All endpoints accept a unified volatility object:
+## Volatility Surfaces
 
-```json
-{
-  "vol_type": "log_normal",
-  "surface_type": "constant",
-  "data": { "vol": 0.2 }
-}
-```
+The `volatility` field accepts a plain scalar (e.g. `0.2`) or a `VolatilityInput` object with five
+surface types:
 
-Or as a bare scalar (auto-converted to constant):
+### Constant
 
 ```json
 "volatility": 0.2
 ```
 
-### Matrix Surface (bilinear interpolation)
+### Matrix (bilinear interpolation)
 
 ```json
 {
-  "vol_type": "log_normal",
   "surface_type": "matrix",
   "data": {
     "strikes":    [90, 100, 110],
@@ -73,158 +76,71 @@ Or as a bare scalar (auto-converted to constant):
       [0.20, 0.19],
       [0.22, 0.21]
     ]
-  },
-  "interpolation": "bilinear",
-  "extrapolation": "flat"
-}
-```
-
-`vol_matrix[i][j]` = volatility at `strikes[i]`, `maturities[j]`.
-
----
-
-## API Reference
-
-### POST `/option-price`
-
-```json
-{
-  "model": "black_scholes",
-  "option_type": "call",
-  "spot": 100,
-  "strike": 105,
-  "rate": 0.05,
-  "time_to_maturity": 0.75,
-  "dividend_yield": 0.0,
-  "volatility": { "surface_type": "constant", "data": { "vol": 0.2 } },
-  "num_simulations": 10000,
-  "seed": 42,
-  "include_insights": true
-}
-```
-
-**Response**
-
-```json
-{
-  "price": 6.387,
-  "model_used": "black_scholes",
-  "volatility_used": { "value": 0.2, "source": "constant", "surface_type": "constant" },
-  "inputs": { "spot": 100, "strike": 105, "time_to_maturity": 0.75 },
-  "insights": { "moneyness": "out_of_the_money", "vol_regime": "normal" }
-}
-```
-
----
-
-### POST `/greeks`
-
-```json
-{
-  "model": "black_scholes",
-  "option_type": "call",
-  "spot": 100,
-  "strike": 100,
-  "rate": 0.05,
-  "time_to_maturity": 1.0,
-  "volatility": { "surface_type": "constant", "data": { "vol": 0.2 } },
-  "method": "analytic",
-  "bump_size": 0.01,
-  "include_insights": true
-}
-```
-
-`method`: `analytic` (BS only) or `finite_difference`. When a vol surface or non-BS model is used, finite differences are applied automatically.
-
-**Response**
-
-```json
-{
-  "delta": 0.6368,
-  "gamma": 0.0188,
-  "vega": 0.3752,
-  "theta": -0.0176,
-  "rho": 0.5323,
-  "units": { "vega": "per 1% vol change", "theta": "per day decay" },
-  "volatility_used": { "value": 0.2, "source": "constant", "surface_type": "constant" },
-  "interpretation": {
-    "delta": "High directional exposure",
-    "vega": "Highly sensitive to volatility",
-    "theta": "Time decay moderate"
   }
 }
 ```
 
----
+### SABR (Hagan et al. 2002)
 
-### POST `/volatility`
-
-**Implied volatility** (Newton-Raphson + bisection fallback)
+Parametric smile via the SABR formula. Resolves to an implied BS vol at (K, T).
 
 ```json
 {
-  "type": "implied",
-  "option_price": 10.45,
-  "option_type": "call",
-  "spot": 100,
-  "strike": 100,
-  "rate": 0.05,
-  "time_to_maturity": 1.0,
-  "vol_type": "log_normal",
-  "initial_guess": 0.2,
-  "tolerance": 1e-6,
-  "max_iterations": 100
+  "surface_type": "sabr",
+  "other_params": { "alpha": 0.3, "beta": 0.5, "rho": -0.3, "nu": 0.4 }
 }
 ```
 
-**Historical volatility**
+| Param | Description |
+|-------|-------------|
+| `alpha` | Initial vol level (> 0) |
+| `beta` | CEV exponent 0–1. `1` = log-normal backbone |
+| `rho` | Spot-vol correlation. Negative → downside skew |
+| `nu` | Vol of vol (≥ 0) |
+
+### SVI (Gatheral 2004 raw parametrisation)
+
+Total implied variance as a function of log-moneyness: `w(k) = a + b·(ρ·(k−m) + √((k−m)² + σ²))`.
 
 ```json
 {
-  "type": "historical",
-  "prices": [100, 102, 101, 105, 107],
-  "method": "log_returns",
-  "window": 5,
-  "annualization_factor": 252
+  "surface_type": "svi",
+  "other_params": { "a": 0.04, "b": 0.2, "rho": -0.3, "m": 0.0, "sigma": 0.3 }
 }
 ```
 
-**Response**
+### Heston (1993 stochastic-vol)
+
+Use with `"model": "heston"` for semi-analytic (characteristic function) or MC pricing.
 
 ```json
 {
-  "volatility": 0.19998445,
-  "type": "implied",
-  "convergence": { "iterations": 2, "error": 1.2e-9, "status": "converged" },
-  "insights": { "vol_regime": "normal", "relative_level": "near_historical_avg" }
-}
-```
-
----
-
-## Error Format
-
-All errors follow a consistent structure:
-
-```json
-{
-  "error": {
-    "code": "INVALID_INPUT",
-    "message": "'spot' must be > 0"
+  "surface_type": "heston",
+  "other_params": {
+    "v0": 0.04, "kappa": 2.0, "theta": 0.04, "sigma_v": 0.3, "rho": -0.7
   }
 }
 ```
 
+Add `"use_mc": true` to `other_params` to use Monte Carlo instead of the semi-analytic integrator.
+
+| Param | Description |
+|-------|-------------|
+| `v0` | Initial variance (initial vol ≈ √v₀) |
+| `kappa` | Mean-reversion speed |
+| `theta` | Long-run variance (long-run vol ≈ √θ) |
+| `sigma_v` | Volatility of variance |
+| `rho` | Spot-variance correlation. Negative → left skew |
+
 ---
 
-## Performance Targets
+## Authentication
 
-| Endpoint | Target |
-|----------|--------|
-| `/option-price` (BS) | < 50ms |
-| `/greeks` (analytic) | < 50ms |
-| `/option-price` (Monte Carlo) | < 300ms |
-| `/volatility` (implied) | < 100ms |
+Disabled by default. To enable:
+
+1. `python generate_token.py` → copy the hash
+2. Create `config.env`: `API_TOKEN_HASH=<hash>`
+3. Pass `Authorization: Bearer <token>` in all requests
 
 ---
 
@@ -232,22 +148,33 @@ All errors follow a consistent structure:
 
 ```
 voltrix-api/
-├── main.py                   # App entry point, error handlers
+├── main.py                      # App entry point, versioned routers, error handlers
 ├── requirements.txt
+├── generate_token.py
+├── docs.md                      # Full API reference
 ├── app/
+│   ├── config.py                # Pydantic settings (reads config.env)
+│   ├── auth.py                  # Bearer token dependency
 │   ├── core/
-│   │   ├── pricing.py        # BS, Bachelier, Monte Carlo, CEV
-│   │   ├── greeks.py         # Analytic + numerical Greeks
-│   │   ├── vol_surface.py    # Vol surface bilinear interpolation
-│   │   ├── vol_engine.py     # Implied vol (NR + bisection), historical vol
-│   │   └── insights.py       # Moneyness, vol regime, skew detection
+│   │   ├── pricing.py           # BS, Bachelier, CEV, GBM MC, Heston dispatch
+│   │   ├── heston.py            # Heston semi-analytic (CF) + MC pricer
+│   │   ├── sabr.py              # Hagan SABR implied-vol formula
+│   │   ├── svi.py               # Gatheral raw SVI total-variance smile
+│   │   ├── greeks.py            # Analytic BS Greeks + finite-difference bump-reprice
+│   │   ├── vol_surface.py       # Vol resolution: constant, matrix, SABR, SVI, Heston
+│   │   ├── vol_engine.py        # Implied vol (Newton-Raphson), historical vol
+│   │   ├── strategies.py        # Multi-leg strategy payoff + breakeven analysis
+│   │   ├── insights.py          # Plain-language result interpretation
+│   │   ├── bond_math.py         # Coupon schedule, accrued interest, YTM solver
+│   │   ├── day_count.py         # ACT/365, ACT/360, 30/360, ACT/ACT year fractions
+│   │   └── finance.py           # NPV, PMT core computations
 │   ├── models/
-│   │   ├── common.py         # Shared Pydantic models
-│   │   ├── option_price.py
-│   │   ├── greeks.py
-│   │   └── volatility.py
+│   │   ├── common.py            # VolatilityInput, VolData, VolatilityUsed, ErrorResponse
+│   │   ├── options.py           # Option price / greeks / vol / strategy request+response
+│   │   ├── bonds.py             # Bond request+response models
+│   │   └── core_finance.py      # NPV / PMT request+response models
 │   └── routes/
-│       ├── option_price.py
-│       ├── greeks.py
-│       └── volatility.py
+│       ├── options.py           # /v2/options/* handlers
+│       ├── bonds.py             # /v2/bonds/* handlers
+│       └── core_finance.py      # /v2/core/* handlers
 ```

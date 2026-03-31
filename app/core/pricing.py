@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.stats import norm
+from .heston import heston_price, heston_mc_price
 
 
 def bs_price(S: float, K: float, T: float, r: float, q: float, sigma: float, option_type: str) -> float:
@@ -89,8 +90,15 @@ def price_option(
     beta: float = 1.0,
     num_simulations: int = 10000,
     seed: int | None = None,
+    heston_params: dict | None = None,
 ) -> float:
-    """Dispatch to the appropriate pricing model."""
+    """
+    Dispatch to the appropriate pricing model.
+
+    For model='heston', heston_params must be provided:
+        {"v0", "kappa", "theta", "sigma_v", "rho"}
+    Set heston_params["use_mc"]=True to use Monte Carlo instead of semi-analytic.
+    """
     if model == "black_scholes":
         return bs_price(S, K, T, r, q, sigma, option_type)
     elif model == "bachelier":
@@ -101,5 +109,24 @@ def price_option(
     elif model == "monte_carlo":
         return mc_price(S, K, T, r, q, sigma, option_type, beta=1.0,
                         num_simulations=num_simulations, seed=seed)
+    elif model == "heston":
+        if not heston_params:
+            raise ValueError("heston_params dict required for model='heston'")
+        hp = heston_params
+        if hp.get("use_mc", False):
+            return heston_mc_price(
+                S=S, K=K, T=T, r=r, q=q,
+                v0=hp["v0"], kappa=hp["kappa"], theta=hp["theta"],
+                sigma_v=hp["sigma_v"], rho=hp["rho"],
+                option_type=option_type,
+                num_simulations=num_simulations,
+                seed=seed,
+            )
+        return heston_price(
+            S=S, K=K, T=T, r=r, q=q,
+            v0=hp["v0"], kappa=hp["kappa"], theta=hp["theta"],
+            sigma_v=hp["sigma_v"], rho=hp["rho"],
+            option_type=option_type,
+        )
     else:
         raise ValueError(f"Unknown model: {model}")

@@ -9,8 +9,13 @@ from .common import VolatilityInput, VolatilityUsed, VolData
 # ── Shared option fields mixin ────────────────────────────────────────────────
 
 class _OptionBase(BaseModel):
-    model: Literal["black_scholes", "bachelier", "cev", "monte_carlo"] = Field(
-        "black_scholes", description="Pricing model."
+    model: Literal["black_scholes", "bachelier", "cev", "monte_carlo", "heston"] = Field(
+        "black_scholes",
+        description=(
+            "Pricing model. `heston` requires `volatility.surface_type='heston'` with "
+            "parameters v0, kappa, theta, sigma_v, rho in `other_params`. "
+            "Add `use_mc: true` to `other_params` to use Monte Carlo instead of semi-analytic."
+        ),
     )
     option_type: Literal["call", "put"] = Field("call", description="Option right.")
 

@@ -33,7 +33,7 @@ Authorization: Bearer <token>
 ### VolatilityInput
 
 Used in `/v2/options/price` and `/v2/options/greeks` as the `volatility` field.
-Accepts either a **plain scalar** (e.g. `0.2`) or a full object:
+Accepts either a **plain scalar** (e.g. `0.2`, auto-coerced to a constant surface) or a full object:
 
 ```json
 {
@@ -48,34 +48,155 @@ Accepts either a **plain scalar** (e.g. `0.2`) or a full object:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `vol_type` | `log_normal` \| `normal` \| `cev` | `log_normal` | Vol convention |
-| `surface_type` | `constant` \| `matrix` | `constant` | Flat vol or interpolated surface |
-| `data` | object | — | See below |
-| `interpolation` | `bilinear` | `bilinear` | Matrix interpolation method |
-| `extrapolation` | `flat` | `flat` | Behaviour outside surface bounds |
-| `other_params` | object | `{}` | Model-specific params. CEV: `{ "cev_beta": 0.5 }` |
+| `vol_type` | `log_normal` \| `normal` \| `cev` | `log_normal` | Vol convention used for scalar-sigma models |
+| `surface_type` | `constant` \| `matrix` \| `sabr` \| `svi` \| `heston` | `constant` | How volatility is specified (see below) |
+| `data` | object | `{}` | Required for `constant` and `matrix`; not used for parametric surfaces |
+| `interpolation` | `bilinear` | `bilinear` | Interpolation method for `matrix` surfaces |
+| `extrapolation` | `flat` | `flat` | Behaviour outside surface bounds for `matrix` |
+| `other_params` | object | `{}` | Model-specific parameters (see per-surface docs below) |
 
-**`data` for `surface_type: "constant"`**
+---
+
+#### surface_type: `"constant"`
+
+A single flat volatility.
 
 ```json
-{ "vol": 0.2 }
+{ "surface_type": "constant", "data": { "vol": 0.2 } }
 ```
 
-**`data` for `surface_type: "matrix"`**
+Or simply pass a scalar:
+
+```json
+"volatility": 0.2
+```
+
+---
+
+#### surface_type: `"matrix"`
+
+Bilinear interpolation over a strike × maturity grid. Extrapolation is flat at boundaries.
 
 ```json
 {
-  "strikes":    [90, 100, 110],
-  "maturities": [0.5, 1.0],
-  "vol_matrix": [
-    [0.25, 0.24],
-    [0.20, 0.19],
-    [0.22, 0.21]
-  ]
+  "surface_type": "matrix",
+  "data": {
+    "strikes":    [90, 100, 110],
+    "maturities": [0.5, 1.0],
+    "vol_matrix": [
+      [0.25, 0.24],
+      [0.20, 0.19],
+      [0.22, 0.21]
+    ]
+  },
+  "interpolation": "bilinear",
+  "extrapolation": "flat"
 }
 ```
 
-`vol_matrix[i][j]` is the vol at `strikes[i]` and `maturities[j]` (maturities in **year fractions**).
+`vol_matrix[i][j]` is the vol at `strikes[i]` and `maturities[j]` (maturities in year fractions).
+
+---
+
+#### surface_type: `"sabr"`
+
+**SABR** (Hagan et al. 2002). Computes an implied Black-Scholes volatility from the SABR formula
+using the current forward `F = S · exp((r−q)·T)`. The resolved implied vol is then used for pricing
+with whichever `model` is selected.
+
+```json
+{
+  "surface_type": "sabr",
+  "other_params": {
+    "alpha": 0.3,
+    "beta":  0.5,
+    "rho":   -0.3,
+    "nu":    0.4
+  }
+}
+```
+
+| Param | Constraint | Description |
+|-------|-----------|-------------|
+| `alpha` | > 0 | Initial vol level (σ₀) |
+| `beta` | 0 ≤ β ≤ 1 | CEV exponent. `0` = normal; `0.5` = square-root; `1` = log-normal backbone |
+| `rho` | −1 < ρ < 1 | Spot-vol Brownian correlation. Negative ρ → downside skew |
+| `nu` | ≥ 0 | Vol of vol. `0` = no smile |
+
+SABR requires no `data` field. The `vol_type` setting is ignored (output is always a BS implied vol).
+
+---
+
+#### surface_type: `"svi"`
+
+**SVI** (Gatheral 2004 raw parametrisation). Specifies total implied variance as a function of
+log-moneyness `k = ln(K/F)`:
+
+```
+w(k) = a + b · (ρ·(k−m) + √((k−m)² + σ²))
+```
+
+Implied vol is recovered as `σ_impl = √(w/T)`.
+
+```json
+{
+  "surface_type": "svi",
+  "other_params": {
+    "a":     0.04,
+    "b":     0.2,
+    "rho":   -0.3,
+    "m":     0.0,
+    "sigma": 0.3
+  }
+}
+```
+
+| Param | Constraint | Description |
+|-------|-----------|-------------|
+| `a` | — | Vertical translation (overall level of total variance) |
+| `b` | ≥ 0 | Angle / breadth; controls smile wings |
+| `rho` | −1 < ρ < 1 | Asymmetry / skew |
+| `m` | — | ATM shift in log-moneyness space |
+| `sigma` | > 0 | Minimum smile width / curvature |
+
+Parameters must satisfy `a + b·σ·√(1−ρ²) ≥ 0` (butterfly arbitrage-free condition). The API
+returns a 400 error if the resolved total variance `w ≤ 0`.
+
+---
+
+#### surface_type: `"heston"`
+
+**Heston (1993) stochastic-vol model.** Used together with `model: "heston"` for pricing.
+Must supply all five model parameters in `other_params`:
+
+```json
+{
+  "surface_type": "heston",
+  "other_params": {
+    "v0":      0.04,
+    "kappa":   2.0,
+    "theta":   0.04,
+    "sigma_v": 0.3,
+    "rho":     -0.7
+  }
+}
+```
+
+| Param | Constraint | Description |
+|-------|-----------|-------------|
+| `v0` | > 0 | Initial variance. Initial vol ≈ √v₀ (e.g. `0.04` → 20% vol) |
+| `kappa` | > 0 | Mean-reversion speed of variance |
+| `theta` | > 0 | Long-run variance (long-run vol ≈ √θ) |
+| `sigma_v` | > 0 | Volatility of variance ("vol of vol") |
+| `rho` | −1 < ρ < 1 | Spot-variance correlation. Negative → left skew |
+
+**Feller condition** `2·κ·θ > σᵥ²` ensures variance stays positive; the API does not enforce this
+but instability may occur if it is badly violated.
+
+**Optional:** add `"use_mc": true` to `other_params` to use Monte Carlo pricing instead of the
+default semi-analytic characteristic-function method.
+
+The `volatility_used.value` in the response reports `√v₀` as a reference implied-vol level.
 
 ---
 
@@ -132,29 +253,35 @@ Price a European call or put option.
 
 **Models**
 
-| `model` | Description |
-|---------|-------------|
-| `black_scholes` | Closed-form Black-Scholes-Merton (default) |
-| `bachelier` | Closed-form Bachelier (normal vol) |
-| `cev` | CEV via Monte Carlo; set `cev_beta` in `volatility.other_params` |
-| `monte_carlo` | Risk-neutral GBM simulation |
+| `model` | Method | Description |
+|---------|--------|-------------|
+| `black_scholes` | Analytic | Black-Scholes-Merton (log-normal); default |
+| `bachelier` | Analytic | Bachelier normal model |
+| `cev` | Monte Carlo | CEV `dS = (r−q)S dt + σ Sᵝ dW`; set `cev_beta` in `other_params` |
+| `monte_carlo` | Monte Carlo | Risk-neutral GBM simulation |
+| `heston` | Semi-analytic / MC | Heston stochastic-vol; requires `surface_type: "heston"` |
+
+`black_scholes`, `bachelier`, `cev`, and `monte_carlo` accept any `surface_type` for vol resolution —
+SABR/SVI/matrix implied vols are resolved to a scalar first, then passed to the chosen model.
+
+`heston` uses its own characteristic-function pricer and ignores the resolved scalar vol.
 
 **Request**
 
 ```json
 {
-  "model":           "black_scholes",
-  "option_type":     "call",
-  "spot":            100,
-  "strike":          105,
-  "rate":            0.05,
-  "dividend_yield":  0.0,
-  "settlement_date": "2026-01-01",
-  "expiry_date":     "2027-01-01",
-  "day_count":       "ACT/365",
-  "volatility":      0.2,
-  "num_simulations": 10000,
-  "seed":            null,
+  "model":            "black_scholes",
+  "option_type":      "call",
+  "spot":             100,
+  "strike":           105,
+  "rate":             0.05,
+  "dividend_yield":   0.0,
+  "settlement_date":  "2026-04-01",
+  "expiry_date":      "2027-04-01",
+  "day_count":        "ACT/365",
+  "volatility":       0.2,
+  "num_simulations":  10000,
+  "seed":             null,
   "include_insights": false
 }
 ```
@@ -165,13 +292,13 @@ Price a European call or put option.
 | `option_type` | `call` \| `put` | | `call` | Option right |
 | `spot` | float > 0 | ✓ | — | Current underlying price |
 | `strike` | float > 0 | ✓ | — | Strike price |
-| `rate` | float | ✓ | — | Continuous risk-free rate (e.g. `0.05`) |
+| `rate` | float | ✓ | — | Continuously compounded risk-free rate (e.g. `0.05`) |
 | `dividend_yield` | float | | `0.0` | Continuous dividend yield |
 | `settlement_date` | date | ✓ | — | Valuation date (`YYYY-MM-DD`) |
 | `expiry_date` | date | ✓ | — | Expiry date (`YYYY-MM-DD`) |
 | `day_count` | string | | `ACT/365` | Day count convention |
-| `volatility` | float \| VolatilityInput | ✓ | — | Scalar or vol surface |
-| `num_simulations` | int | | `10000` | MC paths (Monte Carlo only) |
+| `volatility` | float \| VolatilityInput | ✓ | — | Scalar or vol surface object |
+| `num_simulations` | int | | `10000` | MC paths (MC-based models only) |
 | `seed` | int \| null | | `null` | RNG seed for reproducible MC |
 | `include_insights` | bool | | `false` | Add plain-language interpretation |
 
@@ -179,17 +306,112 @@ Price a European call or put option.
 
 ```json
 {
-  "price":              8.73,
+  "price":               8.73,
   "time_to_expiry_days": 365,
-  "model_used":         "black_scholes",
+  "model_used":          "black_scholes",
   "volatility_used": {
     "value":        0.2,
     "source":       "constant",
     "surface_type": "constant"
   },
   "insights": {
-    "moneyness":   "out_of_the_money",
-    "vol_regime":  "normal"
+    "moneyness":  "out_of_the_money",
+    "vol_regime": "normal"
+  }
+}
+```
+
+`volatility_used.source` is `"constant"`, `"interpolated"`, `"sabr"`, `"svi"`, or `"heston"`.
+
+---
+
+#### Example — SABR surface with Black-Scholes pricing
+
+```json
+{
+  "model":           "black_scholes",
+  "option_type":     "call",
+  "spot":            100,
+  "strike":          105,
+  "rate":            0.05,
+  "settlement_date": "2026-04-01",
+  "expiry_date":     "2027-04-01",
+  "volatility": {
+    "surface_type": "sabr",
+    "other_params": { "alpha": 0.3, "beta": 0.5, "rho": -0.3, "nu": 0.4 }
+  }
+}
+```
+
+The SABR formula resolves an implied BS vol for the given (K, T, F) and prices via Black-Scholes.
+
+---
+
+#### Example — SVI surface with Black-Scholes pricing
+
+```json
+{
+  "model":           "black_scholes",
+  "option_type":     "put",
+  "spot":            100,
+  "strike":          95,
+  "rate":            0.05,
+  "settlement_date": "2026-04-01",
+  "expiry_date":     "2027-04-01",
+  "volatility": {
+    "surface_type": "svi",
+    "other_params": { "a": 0.04, "b": 0.2, "rho": -0.3, "m": 0.0, "sigma": 0.3 }
+  }
+}
+```
+
+---
+
+#### Example — Heston semi-analytic pricing
+
+```json
+{
+  "model":           "heston",
+  "option_type":     "call",
+  "spot":            100,
+  "strike":          105,
+  "rate":            0.05,
+  "settlement_date": "2026-04-01",
+  "expiry_date":     "2027-04-01",
+  "volatility": {
+    "surface_type": "heston",
+    "other_params": {
+      "v0": 0.04, "kappa": 2.0, "theta": 0.04, "sigma_v": 0.3, "rho": -0.7
+    }
+  }
+}
+```
+
+---
+
+#### Example — Heston Monte Carlo pricing
+
+Add `"use_mc": true` to `other_params` to switch from the semi-analytic integrator to a
+full-truncation Euler-Maruyama simulation. Useful as a cross-check or when parameters
+are near the boundary of numerical stability.
+
+```json
+{
+  "model":            "heston",
+  "option_type":      "call",
+  "spot":             100,
+  "strike":           105,
+  "rate":             0.05,
+  "settlement_date":  "2026-04-01",
+  "expiry_date":      "2027-04-01",
+  "num_simulations":  100000,
+  "seed":             42,
+  "volatility": {
+    "surface_type": "heston",
+    "other_params": {
+      "v0": 0.04, "kappa": 2.0, "theta": 0.04, "sigma_v": 0.3,
+      "rho": -0.7, "use_mc": true
+    }
   }
 }
 ```
@@ -200,12 +422,27 @@ Price a European call or put option.
 
 Compute delta, gamma, vega, theta, and rho.
 
+**Automatic method selection**
+
+| Condition | Method forced |
+|-----------|--------------|
+| `model = "black_scholes"` and `surface_type = "constant"` or `"matrix"` with `method = "analytic"` | Analytic (closed-form) |
+| `model ≠ "black_scholes"` | `finite_difference` |
+| `surface_type` is `"matrix"`, `"sabr"`, `"svi"`, or `"heston"` | `finite_difference` |
+
+**Vega definition by model**
+
+| Model | Vega measures |
+|-------|--------------|
+| `black_scholes`, `bachelier`, `cev`, `monte_carlo` | ∂P/∂σ per 1% absolute vol change |
+| `heston` | ∂P/∂σ₀ per 1% change in σ₀ = √v₀ (initial vol) |
+
 **Request** — same fields as `/v2/options/price`, plus:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `method` | `analytic` \| `finite_difference` | `analytic` | `analytic` = closed-form BS; `finite_difference` = bump-and-reprice. Auto-switches to `finite_difference` for non-BS models or matrix vol. |
-| `bump_size` | float | `0.01` | Relative bump size for finite-difference |
+| `method` | `analytic` \| `finite_difference` | `analytic` | Greeks method; auto-overridden (see table above) |
+| `bump_size` | float | `0.01` | Relative bump for finite-difference (e.g. `0.01` = 1%) |
 
 **Response**
 
@@ -231,11 +468,59 @@ Compute delta, gamma, vega, theta, and rho.
 
 ---
 
+#### Example — Heston Greeks
+
+```json
+{
+  "model":           "heston",
+  "option_type":     "call",
+  "spot":            100,
+  "strike":          105,
+  "rate":            0.05,
+  "settlement_date": "2026-04-01",
+  "expiry_date":     "2027-04-01",
+  "volatility": {
+    "surface_type": "heston",
+    "other_params": {
+      "v0": 0.04, "kappa": 2.0, "theta": 0.04, "sigma_v": 0.3, "rho": -0.7
+    }
+  }
+}
+```
+
+Greeks are always computed via finite-difference for Heston; `"method": "analytic"` is silently
+overridden. Vega reports ∂price/∂σ₀ (per 1% change in initial vol √v₀).
+
+---
+
+#### Example — SABR Greeks
+
+```json
+{
+  "model":           "black_scholes",
+  "option_type":     "call",
+  "spot":            100,
+  "strike":          105,
+  "rate":            0.05,
+  "settlement_date": "2026-04-01",
+  "expiry_date":     "2027-04-01",
+  "volatility": {
+    "surface_type": "sabr",
+    "other_params": { "alpha": 0.3, "beta": 0.5, "rho": -0.3, "nu": 0.4 }
+  }
+}
+```
+
+Delta and vega correctly account for the SABR smile shape through bump-and-reprice.
+
+---
+
 ### POST /v2/options/volatility
 
 **Mode 1 — Implied volatility**
 
-Newton-Raphson solver to back out the vol that prices a BS (log-normal) or Bachelier (normal) option to the observed market price.
+Newton-Raphson solver to back out the vol that prices a BS (log-normal) or Bachelier (normal) option
+to the observed market price.
 
 **Request**
 
@@ -248,8 +533,8 @@ Newton-Raphson solver to back out the vol that prices a BS (log-normal) or Bache
   "strike":          100,
   "rate":            0.05,
   "dividend_yield":  0.0,
-  "settlement_date": "2026-01-01",
-  "expiry_date":     "2027-01-01",
+  "settlement_date": "2026-04-01",
+  "expiry_date":     "2027-04-01",
   "day_count":       "ACT/365",
   "vol_type":        "log_normal",
   "initial_guess":   0.2,
@@ -308,10 +593,10 @@ Analyse a multi-leg option strategy at expiry.
 ```json
 {
   "spot":            100,
-  "settlement_date": "2026-01-01",
+  "settlement_date": "2026-04-01",
   "legs": [
-    { "type": "call", "position": "long",  "strike": 100, "expiry_date": "2027-01-01", "premium": 10 },
-    { "type": "call", "position": "short", "strike": 110, "expiry_date": "2027-01-01", "premium": 5  }
+    { "type": "call", "position": "long",  "strike": 100, "expiry_date": "2027-04-01", "premium": 10 },
+    { "type": "call", "position": "short", "strike": 110, "expiry_date": "2027-04-01", "premium": 5  }
   ]
 }
 ```
@@ -328,7 +613,9 @@ Analyse a multi-leg option strategy at expiry.
 
 **Auto-identified strategies**
 
-`long_call`, `short_call`, `long_put`, `short_put`, `bull_call_spread`, `bear_call_spread`, `bull_put_spread`, `bear_put_spread`, `long_straddle`, `short_straddle`, `long_strangle`, `short_strangle`, `butterfly_spread`, `reverse_butterfly`, `iron_condor`, `custom`
+`long_call`, `short_call`, `long_put`, `short_put`, `bull_call_spread`, `bear_call_spread`,
+`bull_put_spread`, `bear_put_spread`, `long_straddle`, `short_straddle`, `long_strangle`,
+`short_strangle`, `butterfly_spread`, `reverse_butterfly`, `iron_condor`, `custom`
 
 **Response**
 
@@ -360,8 +647,8 @@ Price a fixed-coupon bond given a yield-to-maturity. Returns dirty price, accrue
 
 ```json
 {
-  "settlement_date": "2026-01-01",
-  "maturity_date":   "2030-01-01",
+  "settlement_date": "2026-04-01",
+  "maturity_date":   "2030-04-01",
   "coupon_rate":     0.05,
   "face_value":      1000,
   "frequency":       "semi_annual",
@@ -401,8 +688,8 @@ Solve for the yield-to-maturity that matches an observed clean price.
 ```json
 {
   "clean_price":     1013.1,
-  "settlement_date": "2026-01-01",
-  "maturity_date":   "2030-01-01",
+  "settlement_date": "2026-04-01",
+  "maturity_date":   "2030-04-01",
   "coupon_rate":     0.05,
   "face_value":      1000,
   "frequency":       "semi_annual",
@@ -434,8 +721,8 @@ Compute Macaulay duration, modified duration, and convexity.
 ```json
 {
   "clean_price":     1013.1,
-  "settlement_date": "2026-01-01",
-  "maturity_date":   "2030-01-01",
+  "settlement_date": "2026-04-01",
+  "maturity_date":   "2030-04-01",
   "coupon_rate":     0.05,
   "face_value":      1000,
   "frequency":       "semi_annual",
@@ -472,10 +759,10 @@ Discount a series of dated cashflows back to a settlement date.
 
 ```json
 {
-  "settlement_date": "2026-01-01",
+  "settlement_date": "2026-04-01",
   "cashflows": [
-    { "date": "2026-06-01", "amount": 50 },
-    { "date": "2027-01-01", "amount": 1050 }
+    { "date": "2026-10-01", "amount": 50 },
+    { "date": "2027-04-01", "amount": 1050 }
   ],
   "discount_rate": 0.05,
   "day_count":     "ACT/365"
@@ -485,7 +772,7 @@ Discount a series of dated cashflows back to a settlement date.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `settlement_date` | date | ✓ | — | Discount origin date |
-| `cashflows` | array | ✓ | — | List of `{ date, amount }` objects. All dates must be after `settlement_date`. |
+| `cashflows` | array | ✓ | — | List of `{ date, amount }`. All dates must be after `settlement_date`. |
 | `discount_rate` | float | ✓ | — | Annual flat discount rate (e.g. `0.05`) |
 | `day_count` | string | | `ACT/365` | Day count convention |
 
@@ -507,7 +794,8 @@ Discount a series of dated cashflows back to a settlement date.
 
 ### POST /v2/core/pmt
 
-Compute the fixed periodic payment for a fully-amortising loan. The number of periods is derived from the dates — no manual period count required.
+Compute the fixed periodic payment for a fully-amortising loan. The number of periods is derived
+from the dates — no manual period count required.
 
 **Request**
 
@@ -515,8 +803,8 @@ Compute the fixed periodic payment for a fully-amortising loan. The number of pe
 {
   "principal":  100000,
   "rate":       0.08,
-  "start_date": "2026-01-01",
-  "end_date":   "2031-01-01",
+  "start_date": "2026-04-01",
+  "end_date":   "2031-04-01",
   "frequency":  "monthly"
 }
 ```
@@ -553,3 +841,38 @@ Compute the fixed periodic payment for a fully-amortising loan. The number of pe
 ```
 
 No authentication required.
+
+---
+
+## Volatility Model Quick Reference
+
+### Choosing a vol surface
+
+| Use case | `surface_type` | Required `other_params` |
+|----------|---------------|------------------------|
+| Single flat vol | `constant` | — (`data.vol`) |
+| Market vol grid | `matrix` | — (`data.strikes/maturities/vol_matrix`) |
+| Parametric smile (calibrated) | `sabr` | `alpha`, `beta`, `rho`, `nu` |
+| Total-variance smile | `svi` | `a`, `b`, `rho`, `m`, `sigma` |
+| Stochastic-vol model | `heston` | `v0`, `kappa`, `theta`, `sigma_v`, `rho` |
+
+### Choosing a pricing model
+
+| `model` | Vol surface compatibility | Greeks method |
+|---------|--------------------------|--------------|
+| `black_scholes` | All surface types | Analytic (constant) or FD (others) |
+| `bachelier` | `constant`, `matrix`, `sabr`, `svi` | Finite-difference |
+| `cev` | `constant`, `matrix`, `sabr`, `svi` | Finite-difference |
+| `monte_carlo` | `constant`, `matrix`, `sabr`, `svi` | Finite-difference |
+| `heston` | `heston` only | Finite-difference (bumps v₀) |
+
+### Heston parameter guidance
+
+| Regime | Typical values |
+|--------|---------------|
+| Equity (S&P-like) | v0=0.04, κ=2, θ=0.04, σᵥ=0.3–0.6, ρ=−0.7 to −0.5 |
+| Low-vol | v0=0.01, κ=3, θ=0.01, σᵥ=0.2, ρ=−0.5 |
+| High-vol | v0=0.09, κ=1, θ=0.09, σᵥ=0.5, ρ=−0.8 |
+
+Use `heston` MC (`"use_mc": true`) with a large `num_simulations` (50 000+) as a cross-check of
+the semi-analytic result. Both should agree within a few basis points.

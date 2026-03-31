@@ -35,7 +35,7 @@ The API is a FastAPI application with three domains:
 
 | Domain | Router | Models | Core Logic |
 |---|---|---|---|
-| Options | `app/routes/options.py` | `app/models/options.py` | `app/core/{pricing,greeks,vol_engine,vol_surface,strategies,insights}.py` |
+| Options | `app/routes/options.py` | `app/models/options.py` | `app/core/{pricing,greeks,vol_engine,vol_surface,heston,sabr,svi,strategies,insights}.py` |
 | Bonds | `app/routes/bonds.py` | `app/models/bonds.py` | `app/core/{bond_math,day_count}.py` |
 | Core Finance | `app/routes/core_finance.py` | `app/models/core_finance.py` | `app/core/finance.py` |
 
@@ -54,11 +54,14 @@ POST /options/price
 
 ### Volatility Resolution Pipeline
 
-`VolatilityInput` (defined in `app/models/common.py`) supports two surface types:
+`VolatilityInput` (defined in `app/models/common.py`) supports five surface types:
 - **constant**: Single scalar value
 - **matrix**: Strike × maturity grid with bilinear interpolation (flat extrapolation at boundaries)
+- **sabr**: Hagan et al. (2002) formula; resolves to implied BS vol. Parameters: `alpha`, `beta`, `rho`, `nu` in `other_params`. Requires forward F = S·exp((r−q)·T) computed in the route.
+- **svi**: Gatheral raw SVI parametrisation; resolves to implied BS vol. Parameters: `a`, `b`, `rho`, `m`, `sigma` in `other_params`.
+- **heston**: Heston (1993) stochastic-vol model; returns √v₀ as reference vol. Actual pricing handled by `heston_price()`. Parameters: `v0`, `kappa`, `theta`, `sigma_v`, `rho` in `other_params`.
 
-Routes accept `volatility` as either a plain scalar (auto-coerced to `VolatilityInput`) or a full `VolatilityInput` object. Resolution always flows through `app/core/vol_surface.py:resolve_vol()`.
+Routes accept `volatility` as either a plain scalar (auto-coerced to `VolatilityInput`) or a full `VolatilityInput` object. Resolution always flows through `app/core/vol_surface.py:resolve_vol(vol_input, K, T, S, r, q)`. Note: `S`, `r`, `q` are required for SABR/SVI/Heston forward computation.
 
 ### Day Count Conventions
 
@@ -70,10 +73,16 @@ Implemented in `app/core/day_count.py`. Supported: `ACT/365`, `ACT/360`, `30/360
 |---|---|---|
 | Black-Scholes | `black_scholes` | Log-normal; analytic Greeks available |
 | Bachelier | `bachelier` | Normal model |
-| CEV | `cev` | Monte Carlo only when beta ≠ 1 |
+| CEV | `cev` | Monte Carlo only when beta ≠ 1; `cev_beta` in `other_params` |
 | Monte Carlo | `monte_carlo` | GBM discretization; controlled via `num_simulations`, `seed` |
+| Heston | `heston` | Semi-analytic (characteristic function) or MC; requires `surface_type="heston"` and `heston_params` dict |
 
-Greeks default to analytic (Black-Scholes only) or numerical finite-difference for other models.
+Greeks default to analytic (Black-Scholes + constant/matrix only) or numerical finite-difference. Finite-difference is forced when `model != "black_scholes"` or `surface_type` is `"matrix"`, `"sabr"`, `"svi"`, or `"heston"`. For Heston, vega bumps `v0` (∂P/∂σ₀ where σ₀=√v₀) rather than the reference scalar sigma.
+
+New core modules:
+- `app/core/heston.py`: `heston_price()` (semi-analytic CF integration) + `heston_mc_price()` (Euler-Maruyama MC)
+- `app/core/sabr.py`: `sabr_implied_vol(F, K, T, alpha, beta, rho, nu)`
+- `app/core/svi.py`: `svi_implied_vol(F, K, T, a, b, rho, m, sigma)`
 
 ### Bond Math
 

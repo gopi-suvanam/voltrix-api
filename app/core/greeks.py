@@ -58,6 +58,7 @@ def numerical_greeks(
     beta: float = 1.0,
     num_simulations: int = 10000,
     seed: int | None = None,
+    heston_params: dict | None = None,
 ) -> dict:
     """
     Central-difference numerical Greeks.
@@ -65,7 +66,8 @@ def numerical_greeks(
     """
     def price(s, k, t, r_, q_, sig):
         return price_option(model, option_type, s, k, t, r_, q_, sig,
-                            beta=beta, num_simulations=num_simulations, seed=seed)
+                            beta=beta, num_simulations=num_simulations, seed=seed,
+                            heston_params=heston_params)
 
     h_s = bump_size * S       # spot bump
     h_sig = bump_size         # vol bump
@@ -79,10 +81,25 @@ def numerical_greeks(
     delta = (p_sup - p_sdn) / (2.0 * h_s)
     gamma = (p_sup - 2.0 * p_base + p_sdn) / (h_s ** 2)
 
-    # Vega (central diff on sigma, result per 1% change)
-    p_vup = price(S, K, T, r, q, sigma + h_sig)
-    p_vdn = price(S, K, T, r, q, sigma - h_sig)
-    vega = (p_vup - p_vdn) / (2.0 * h_sig) * 0.01
+    # Vega — for Heston: bump v0 (∂P/∂σ₀, σ₀ = √v0) per 1% change in σ₀
+    if model == "heston" and heston_params is not None:
+        import math
+        vol0 = math.sqrt(max(heston_params["v0"], 1e-9))   # σ₀ = √v0
+        vol0_up = vol0 + h_sig
+        vol0_dn = max(vol0 - h_sig, 1e-6)
+        hp_up = {**heston_params, "v0": vol0_up ** 2}
+        hp_dn = {**heston_params, "v0": vol0_dn ** 2}
+        p_vup = price_option(model, option_type, S, K, T, r, q, sigma,
+                             beta=beta, num_simulations=num_simulations, seed=seed,
+                             heston_params=hp_up)
+        p_vdn = price_option(model, option_type, S, K, T, r, q, sigma,
+                             beta=beta, num_simulations=num_simulations, seed=seed,
+                             heston_params=hp_dn)
+        vega = (p_vup - p_vdn) / (vol0_up - vol0_dn) * 0.01
+    else:
+        p_vup = price(S, K, T, r, q, sigma + h_sig)
+        p_vdn = price(S, K, T, r, q, sigma - h_sig)
+        vega = (p_vup - p_vdn) / (2.0 * h_sig) * 0.01
 
     # Theta (forward diff: value of 1 day passing = T decreases by 1/365)
     h_t = 1.0 / 365.0
@@ -112,10 +129,12 @@ def compute_greeks(
     beta: float = 1.0,
     num_simulations: int = 10000,
     seed: int | None = None,
+    heston_params: dict | None = None,
 ) -> dict:
     """Route to analytic (BS only) or numerical Greeks."""
     if method == "analytic" and model == "black_scholes":
         return bs_greeks_analytic(S, K, T, r, q, sigma, option_type)
     return numerical_greeks(S, K, T, r, q, sigma, option_type, model,
                             bump_size=bump_size, beta=beta,
-                            num_simulations=num_simulations, seed=seed)
+                            num_simulations=num_simulations, seed=seed,
+                            heston_params=heston_params)

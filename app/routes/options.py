@@ -35,8 +35,22 @@ router = APIRouter(prefix="/options", tags=["Options"])
 def compute_option_price(req: OptionPriceRequest):
     T = year_fraction(req.settlement_date, req.expiry_date, req.day_count)
     vol_dict = req.volatility.model_dump()
-    beta = vol_dict.get("other_params", {}).get("cev_beta", 1.0)
-    sigma, source, surface_type = resolve_vol(vol_dict, req.strike, T)
+    other = vol_dict.get("other_params", {})
+    beta = other.get("cev_beta", 1.0)
+    sigma, source, surface_type = resolve_vol(
+        vol_dict, req.strike, T, S=req.spot, r=req.rate, q=req.dividend_yield
+    )
+
+    heston_params = None
+    if req.model == "heston":
+        heston_params = {
+            "v0":      float(other.get("v0", 0.04)),
+            "kappa":   float(other.get("kappa", 2.0)),
+            "theta":   float(other.get("theta", 0.04)),
+            "sigma_v": float(other.get("sigma_v", 0.3)),
+            "rho":     float(other.get("rho", -0.7)),
+            "use_mc":  bool(other.get("use_mc", False)),
+        }
 
     price = price_option(
         model=req.model,
@@ -50,6 +64,7 @@ def compute_option_price(req: OptionPriceRequest):
         beta=beta,
         num_simulations=req.num_simulations,
         seed=req.seed,
+        heston_params=heston_params,
     )
 
     insights = None
@@ -92,12 +107,27 @@ def compute_option_price(req: OptionPriceRequest):
 def compute_greeks_endpoint(req: GreeksRequest):
     T = year_fraction(req.settlement_date, req.expiry_date, req.day_count)
     vol_dict = req.volatility.model_dump()
-    beta = vol_dict.get("other_params", {}).get("cev_beta", 1.0)
-    sigma, source, surface_type = resolve_vol(vol_dict, req.strike, T)
+    other = vol_dict.get("other_params", {})
+    beta = other.get("cev_beta", 1.0)
+    sigma, source, surface_type = resolve_vol(
+        vol_dict, req.strike, T, S=req.spot, r=req.rate, q=req.dividend_yield
+    )
 
     method = req.method
-    if surface_type == "matrix" or req.model != "black_scholes":
+    # Parametric surfaces and Heston always require finite-difference Greeks
+    if surface_type in ("matrix", "sabr", "svi", "heston") or req.model != "black_scholes":
         method = "finite_difference"
+
+    heston_params = None
+    if req.model == "heston":
+        heston_params = {
+            "v0":      float(other.get("v0", 0.04)),
+            "kappa":   float(other.get("kappa", 2.0)),
+            "theta":   float(other.get("theta", 0.04)),
+            "sigma_v": float(other.get("sigma_v", 0.3)),
+            "rho":     float(other.get("rho", -0.7)),
+            "use_mc":  bool(other.get("use_mc", False)),
+        }
 
     greeks = compute_greeks(
         model=req.model,
@@ -113,6 +143,7 @@ def compute_greeks_endpoint(req: GreeksRequest):
         beta=beta,
         num_simulations=req.num_simulations,
         seed=req.seed,
+        heston_params=heston_params,
     )
 
     interpretation = None
