@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import date
 from typing import Literal, Optional, Union
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .common import VolatilityInput, VolatilityUsed, VolData
 
@@ -52,6 +52,24 @@ class _OptionBase(BaseModel):
 # ── /options/price ────────────────────────────────────────────────────────────
 
 class OptionPriceRequest(_OptionBase):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "model": "black_scholes",
+            "option_type": "call",
+            "spot": 100.0,
+            "strike": 105.0,
+            "rate": 0.05,
+            "dividend_yield": 0.0,
+            "settlement_date": "2026-04-01",
+            "expiry_date": "2027-04-01",
+            "day_count": "ACT/365",
+            "volatility": 0.2,
+            "num_simulations": 10000,
+            "seed": None,
+            "include_insights": False,
+        }
+    })
+
     num_simulations: int = Field(10000, gt=0, description="Monte Carlo path count (model='monte_carlo' only).")
     seed: Optional[int] = Field(None, description="Random seed for reproducible Monte Carlo results.")
     include_insights: bool = Field(False, description="Return a plain-language interpretation of the result.")
@@ -68,6 +86,26 @@ class OptionPriceResponse(BaseModel):
 # ── /options/greeks ───────────────────────────────────────────────────────────
 
 class GreeksRequest(_OptionBase):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "model": "black_scholes",
+            "option_type": "call",
+            "spot": 100.0,
+            "strike": 105.0,
+            "rate": 0.05,
+            "dividend_yield": 0.0,
+            "settlement_date": "2026-04-01",
+            "expiry_date": "2027-04-01",
+            "day_count": "ACT/365",
+            "volatility": 0.2,
+            "method": "analytic",
+            "bump_size": 0.01,
+            "num_simulations": 10000,
+            "seed": None,
+            "include_insights": False,
+        }
+    })
+
     method: Literal["analytic", "finite_difference"] = Field(
         "analytic",
         description=(
@@ -100,6 +138,25 @@ class GreeksResponse(BaseModel):
 # ── /options/volatility ───────────────────────────────────────────────────────
 
 class VolatilityRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "type": "implied",
+            "option_price": 8.73,
+            "option_type": "call",
+            "spot": 100.0,
+            "strike": 105.0,
+            "rate": 0.05,
+            "dividend_yield": 0.0,
+            "settlement_date": "2026-04-01",
+            "expiry_date": "2027-04-01",
+            "day_count": "ACT/365",
+            "vol_type": "log_normal",
+            "initial_guess": 0.2,
+            "tolerance": 1e-6,
+            "max_iterations": 100,
+        }
+    })
+
     type: Literal["implied", "historical"] = Field(
         ...,
         description="`implied` back-solves from a market price; `historical` estimates from a price series.",
@@ -175,6 +232,17 @@ class StrategyLeg(BaseModel):
 
 
 class StrategyRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "spot": 100.0,
+            "settlement_date": "2026-04-01",
+            "legs": [
+                {"type": "call", "position": "long",  "strike": 100.0, "expiry_date": "2027-04-01", "premium": 10.0},
+                {"type": "call", "position": "short", "strike": 110.0, "expiry_date": "2027-04-01", "premium": 5.0},
+            ],
+        }
+    })
+
     spot: float = Field(..., gt=0, description="Current underlying spot price.")
     settlement_date: date = Field(..., description="Trade / valuation date.")
     legs: list[StrategyLeg] = Field(..., min_length=1, description="Option legs forming the strategy.")

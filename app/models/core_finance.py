@@ -1,6 +1,6 @@
 import datetime
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Cashflow(BaseModel):
@@ -9,6 +9,19 @@ class Cashflow(BaseModel):
 
 
 class NpvRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "settlement_date": "2026-04-01",
+            "cashflows": [
+                {"date": "2026-10-01", "amount": 500.0},
+                {"date": "2027-04-01", "amount": 500.0},
+                {"date": "2027-10-01", "amount": 10500.0},
+            ],
+            "discount_rate": 0.05,
+            "day_count": "ACT/365",
+        }
+    })
+
     settlement_date: datetime.date = Field(..., description="Valuation / discount-origin date.")
 
     cashflows: list[Cashflow] = Field(
@@ -48,6 +61,16 @@ class NpvResponse(BaseModel):
 
 
 class PmtRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "principal": 100000.0,
+            "rate": 0.08,
+            "start_date": "2026-04-01",
+            "end_date": "2031-04-01",
+            "frequency": "monthly",
+        }
+    })
+
     principal: float = Field(..., gt=0, description="Loan principal amount.")
     rate: float = Field(..., ge=0, description="Annual interest rate as a decimal (e.g. 0.08 for 8%).")
 

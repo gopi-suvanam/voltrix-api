@@ -1,9 +1,21 @@
 from datetime import date
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BondPriceRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "settlement_date": "2026-04-01",
+            "maturity_date": "2031-04-01",
+            "coupon_rate": 0.05,
+            "face_value": 1000.0,
+            "frequency": "semi_annual",
+            "ytm": 0.045,
+            "day_count": "30/360",
+        }
+    })
+
     settlement_date: date = Field(..., description="Trade settlement date.")
     maturity_date: date = Field(..., description="Bond maturity date.")
 
@@ -32,6 +44,19 @@ class BondPriceResponse(BaseModel):
 
 
 class BondYieldRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "clean_price": 1018.5,
+            "settlement_date": "2026-04-01",
+            "maturity_date": "2031-04-01",
+            "coupon_rate": 0.05,
+            "face_value": 1000.0,
+            "frequency": "semi_annual",
+            "day_count": "30/360",
+            "initial_guess": 0.05,
+        }
+    })
+
     clean_price: float = Field(..., gt=0, description="Observed clean market price of the bond.")
 
     settlement_date: date = Field(..., description="Trade settlement date.")
@@ -61,6 +86,19 @@ class BondYieldResponse(BaseModel):
 
 
 class BondSensitivityRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "clean_price": 1018.5,
+            "settlement_date": "2026-04-01",
+            "maturity_date": "2031-04-01",
+            "coupon_rate": 0.05,
+            "face_value": 1000.0,
+            "frequency": "semi_annual",
+            "ytm": 0.045,
+            "day_count": "30/360",
+        }
+    })
+
     clean_price: float = Field(..., gt=0, description="Observed clean market price.")
 
     settlement_date: date = Field(..., description="Trade settlement date.")
