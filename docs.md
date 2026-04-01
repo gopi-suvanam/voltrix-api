@@ -517,10 +517,18 @@ Delta and vega correctly account for the SABR smile shape through bump-and-repri
 
 ### POST /v2/options/volatility
 
-**Mode 1 — Implied volatility**
+Three operating modes selected by `type` and `vol_type`.
 
-Newton-Raphson solver to back out the vol that prices a BS (log-normal) or Bachelier (normal) option
-to the observed market price.
+---
+
+#### Mode 1 — Back-solve implied vol (`type: "implied"`, `vol_type: "log_normal"` or `"normal"`)
+
+Newton-Raphson solver that finds the vol making the model price equal the observed market price.
+
+| `vol_type` | Pricing model used for inversion |
+|------------|----------------------------------|
+| `log_normal` | Black-Scholes (default) |
+| `normal` | Bachelier |
 
 **Request**
 
@@ -543,7 +551,59 @@ to the observed market price.
 }
 ```
 
-**Mode 2 — Historical volatility**
+---
+
+#### Mode 2 — Evaluate parametric model vol (`type: "implied"`, `vol_type: "sabr"|"svi"|"heston"|"cev"`)
+
+Evaluates the model's implied vol analytically at the given (K, T) without back-solving.
+No `option_price` required. Pass calibrated parameters (from `/options/calibration/*`) via `model_params`.
+
+| `vol_type` | Required `model_params` keys | Formula |
+|------------|------------------------------|---------|
+| `sabr` | `alpha`, `beta`, `rho`, `nu` | Hagan et al. (2002) SABR |
+| `svi` | `a`, `b`, `rho`, `m`, `sigma` | Gatheral raw SVI |
+| `heston` | `v0`, `kappa`, `theta`, `sigma_v`, `rho` | Returns `√v₀` as reference vol |
+| `cev` | `sigma`, `beta` | Hagan-Woodward CEV-to-BS approximation |
+
+**Request — SABR example**
+
+```json
+{
+  "type":            "implied",
+  "vol_type":        "sabr",
+  "spot":            100,
+  "strike":          105,
+  "rate":            0.05,
+  "dividend_yield":  0.0,
+  "settlement_date": "2026-04-01",
+  "expiry_date":     "2027-04-01",
+  "model_params": {
+    "alpha": 0.3,
+    "beta":  0.5,
+    "rho":   -0.4,
+    "nu":    0.6
+  }
+}
+```
+
+**Request — SVI example**
+
+```json
+{
+  "type":       "implied",
+  "vol_type":   "svi",
+  "spot":       100,
+  "strike":     95,
+  "rate":       0.05,
+  "settlement_date": "2026-04-01",
+  "expiry_date":     "2027-04-01",
+  "model_params": { "a": 0.01, "b": 0.12, "rho": -0.5, "m": 0.0, "sigma": 0.15 }
+}
+```
+
+---
+
+#### Mode 3 — Historical volatility (`type: "historical"`)
 
 Realised vol from a price series, annualised.
 
@@ -563,24 +623,30 @@ Realised vol from a price series, annualised.
 | `window` | Rolling window size; `null` = full series |
 | `annualization_factor` | 252 (daily), 52 (weekly), 12 (monthly) |
 
+---
+
 **Response**
 
 ```json
 {
   "volatility":          0.2134,
   "type":                "implied",
+  "vol_model":           "log_normal",
   "time_to_expiry_days": 365,
   "convergence": {
     "iterations": 4,
     "error":      3.2e-10,
     "status":     "converged"
   },
-  "insights": {
-    "vol_regime":     "normal",
-    "relative_level": "near_historical_avg"
-  }
+  "insights": { "vol_regime": "normal" }
 }
 ```
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| `type` | `implied`, `model`, `historical` | `model` when a parametric vol_type was used |
+| `vol_model` | `log_normal`, `normal`, `sabr`, `svi`, `heston`, `cev` | Vol model used |
+| `convergence` | object or `null` | Present only for `type=implied` (back-solver modes) |
 
 ---
 
@@ -634,6 +700,235 @@ Analyse a multi-leg option strategy at expiry.
 ```
 
 `max_profit` / `max_loss` are `null` for theoretically unlimited payoffs (e.g. naked long call).
+
+---
+
+## /v2/options/calibration
+
+Fit volatility model parameters to a set of observed market option prices.
+All calibration endpoints share the same request base:
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `observations` | array | ✓ | — | List of market option observations (see below) |
+| `spot` | float > 0 | ✓ | — | Current underlying spot price |
+| `rate` | float | ✓ | — | Continuously compounded risk-free rate |
+| `dividend_yield` | float | | `0.0` | Continuous dividend yield |
+| `settlement_date` | date | ✓ | — | Valuation / trade date |
+| `day_count` | string | | `ACT/365` | Day count convention |
+
+Each observation in `observations`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `option_type` | `call` \| `put` | Option right |
+| `strike` | float > 0 | Strike price |
+| `expiry_date` | date | Option expiry date (must be after `settlement_date`) |
+| `market_price` | float > 0 | Observed market option price |
+
+Calibrated parameters can be used directly in any `/options/*` endpoint — pass them as
+`volatility.other_params` with the matching `surface_type`, or as `model_params` in
+`/options/volatility`.
+
+---
+
+### POST /v2/options/calibration/sabr
+
+Fit Hagan et al. (2002) SABR parameters **(α, ρ, ν)** with **β fixed**.
+
+**Algorithm:** Back-solves market prices to Black-Scholes implied vols, then minimises sum of
+squared (SABR vol − market vol)² with L-BFGS-B using multiple restarts.
+
+**Minimum observations:** 3 options with distinct strikes.
+
+**Additional field**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `beta` | float 0–1 | `0.5` | CEV exponent (fixed). `0`=normal, `0.5`=square-root, `1`=log-normal |
+
+**Request**
+
+```json
+{
+  "spot": 100, "rate": 0.05, "settlement_date": "2026-04-01", "day_count": "ACT/365",
+  "beta": 0.5,
+  "observations": [
+    { "option_type": "call", "strike": 90,  "expiry_date": "2027-04-01", "market_price": 12.5 },
+    { "option_type": "call", "strike": 95,  "expiry_date": "2027-04-01", "market_price": 9.2  },
+    { "option_type": "call", "strike": 100, "expiry_date": "2027-04-01", "market_price": 6.5  },
+    { "option_type": "call", "strike": 105, "expiry_date": "2027-04-01", "market_price": 4.3  },
+    { "option_type": "call", "strike": 110, "expiry_date": "2027-04-01", "market_price": 2.7  }
+  ]
+}
+```
+
+**Response**
+
+```json
+{
+  "alpha":          0.3001,
+  "beta":           0.5,
+  "rho":           -0.3998,
+  "nu":             0.5999,
+  "rmse":           0.000002,
+  "n_observations": 5,
+  "converged":      true,
+  "message":        "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_PGTOL"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `alpha` | Calibrated initial vol level α > 0 |
+| `beta` | CEV exponent (echoed from input) |
+| `rho` | Calibrated spot-vol correlation ρ ∈ (−1, 1) |
+| `nu` | Calibrated vol-of-vol ν ≥ 0 |
+| `rmse` | Root-mean-square error in implied vol units |
+| `n_observations` | Observations that produced valid implied vols |
+| `converged` | Whether the optimizer reported convergence |
+
+**Using the result in `/options/price`:**
+
+```json
+{
+  "model": "black_scholes",
+  "volatility": {
+    "surface_type": "sabr",
+    "other_params": { "alpha": 0.3001, "beta": 0.5, "rho": -0.3998, "nu": 0.5999 }
+  }
+}
+```
+
+---
+
+### POST /v2/options/calibration/svi
+
+Fit Gatheral (2004) raw SVI parameters **(a, b, ρ, m, σ)**.
+
+**Algorithm:** Back-solves to implied vols, minimises squared SVI-vs-market vol errors with the
+butterfly-arbitrage-free constraint `a + b·σ·√(1−ρ²) ≥ 0` enforced.
+
+**Minimum observations:** 4 options with distinct strikes.
+
+**Request** — same base as SABR, no extra fields.
+
+**Response**
+
+```json
+{
+  "a":              0.0100,
+  "b":              0.1200,
+  "rho":           -0.5000,
+  "m":              0.0000,
+  "sigma":          0.1500,
+  "rmse":           0.000015,
+  "n_observations": 8,
+  "converged":      true,
+  "message":        "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_PGTOL"
+}
+```
+
+**Using the result in `/options/price`:**
+
+```json
+{
+  "model": "black_scholes",
+  "volatility": {
+    "surface_type": "svi",
+    "other_params": { "a": 0.01, "b": 0.12, "rho": -0.5, "m": 0.0, "sigma": 0.15 }
+  }
+}
+```
+
+---
+
+### POST /v2/options/calibration/heston
+
+Fit Heston (1993) model parameters **(v₀, κ, θ, σᵥ, ρ)** directly to option prices.
+
+**Algorithm:** Differential evolution for global search, then L-BFGS-B refinement. The
+semi-analytic characteristic-function pricer is used throughout — no Monte Carlo.
+
+**Minimum observations:** 5 options (ideally spanning multiple strikes and maturities).
+
+**Response**
+
+```json
+{
+  "v0":                          0.0401,
+  "kappa":                       1.998,
+  "theta":                       0.0400,
+  "sigma_v":                     0.301,
+  "rho":                        -0.699,
+  "rmse":                        0.012,
+  "n_observations":              7,
+  "converged":                   true,
+  "feller_condition_satisfied":  true,
+  "message":                     "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_PGTOL"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `rmse` | Root-mean-square error in **price** units |
+| `feller_condition_satisfied` | `2κθ > σᵥ²`: variance stays positive almost surely |
+
+**Using the result in `/options/price`:**
+
+```json
+{
+  "model": "heston",
+  "volatility": {
+    "surface_type": "heston",
+    "other_params": { "v0": 0.0401, "kappa": 1.998, "theta": 0.04, "sigma_v": 0.301, "rho": -0.699 }
+  }
+}
+```
+
+---
+
+### POST /v2/options/calibration/cev
+
+Fit CEV model parameters **(σ, β)** using the Hagan-Woodward (1999) analytic vol approximation.
+Avoids slow Monte Carlo entirely during calibration.
+
+**Minimum observations:** 2 options with distinct strikes.
+
+**β interpretation:** `β=1` → log-normal (Black-Scholes), `β=0.5` → square-root, `β=0` → normal.
+
+**Response**
+
+```json
+{
+  "sigma":          0.2980,
+  "beta":           0.502,
+  "rmse":           0.000008,
+  "n_observations": 5,
+  "converged":      true,
+  "message":        "CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_PGTOL"
+}
+```
+
+**Using the result in `/options/price`:**
+
+```json
+{
+  "model": "cev",
+  "volatility": {
+    "surface_type": "constant",
+    "data": { "vol": 0.298 },
+    "other_params": { "cev_beta": 0.502 }
+  }
+}
+```
+
+**Error Responses**
+
+| HTTP | Code | Cause |
+|------|------|-------|
+| 400 | `CALIBRATION_ERROR` | Insufficient valid observations after implied-vol extraction |
+| 422 | `INVALID_INPUT` | `expiry_date` before `settlement_date`, or missing required fields |
 
 ---
 
@@ -866,6 +1161,26 @@ No authentication required.
 | `monte_carlo` | `constant`, `matrix`, `sabr`, `svi` | Finite-difference |
 | `heston` | `heston` only | Finite-difference (bumps v₀) |
 
+### Calibration → Usage Mapping
+
+| Calibration endpoint | Calibrates | Use in pricing / vol eval |
+|---------------------|------------|--------------------------|
+| `/calibration/sabr` | α, β (fixed), ρ, ν | `volatility.surface_type = "sabr"` |
+| `/calibration/svi` | a, b, ρ, m, σ | `volatility.surface_type = "svi"` |
+| `/calibration/heston` | v₀, κ, θ, σᵥ, ρ | `model = "heston"`, `volatility.surface_type = "heston"` |
+| `/calibration/cev` | σ, β | `model = "cev"`, `volatility.other_params.cev_beta = β` |
+
+### Typical workflow
+
+```
+1. Observe market option prices across strikes / maturities
+2. POST /v2/options/calibration/{model}  → get calibrated parameters + RMSE
+3. POST /v2/options/volatility (vol_type = model)
+       with model_params = calibrated params  → evaluate smile at any (K, T)
+4. POST /v2/options/price / /options/greeks
+       with volatility.surface_type = model  → price / risk with calibrated surface
+```
+
 ### Heston parameter guidance
 
 | Regime | Typical values |
@@ -876,3 +1191,19 @@ No authentication required.
 
 Use `heston` MC (`"use_mc": true`) with a large `num_simulations` (50 000+) as a cross-check of
 the semi-analytic result. Both should agree within a few basis points.
+
+### SABR parameter guidance
+
+| β value | Backbone | Typical α range | Use case |
+|---------|----------|-----------------|----------|
+| `0.0` | Normal (flat backbone) | 0.05–0.15 | Interest rate options |
+| `0.5` | Square-root (CIR-like) | 0.1–0.5 | General equity / commodity |
+| `1.0` | Log-normal | 0.1–0.5 | Equivalent to Black-Scholes backbone |
+
+ρ < 0 produces left skew (equity-like); ρ > 0 right skew (commodity-like). ν controls smile curvature.
+
+### SVI arbitrage conditions
+
+The raw SVI parametrisation `w(k) = a + b·(ρ·(k−m) + √((k−m)²+σ²))` is free of butterfly
+arbitrage when `a + b·σ·√(1−ρ²) ≥ 0`. Calendar-spread arbitrage requires additional checks
+across maturities that are not automatically enforced.

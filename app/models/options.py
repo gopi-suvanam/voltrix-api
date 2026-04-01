@@ -179,9 +179,25 @@ class VolatilityRequest(BaseModel):
     day_count: Literal["ACT/365", "ACT/360", "30/360", "ACT/ACT"] = Field(
         "ACT/365", description="[implied] Day count convention for time-to-expiry."
     )
-    vol_type: Literal["log_normal", "normal"] = Field(
+    vol_type: Literal["log_normal", "normal", "sabr", "svi", "heston", "cev"] = Field(
         "log_normal",
-        description="[implied] Vol model assumption: `log_normal` (Black-Scholes) or `normal` (Bachelier).",
+        description=(
+            "[implied] Vol model used to compute or back-solve the volatility.\n\n"
+            "- `log_normal` — Black-Scholes back-solver (requires `option_price`)\n"
+            "- `normal` — Bachelier back-solver (requires `option_price`)\n"
+            "- `sabr` — evaluate SABR implied vol at (K, T) (requires `model_params`: alpha, beta, rho, nu)\n"
+            "- `svi` — evaluate SVI implied vol at (K, T) (requires `model_params`: a, b, rho, m, sigma)\n"
+            "- `heston` — return reference vol √v₀ (requires `model_params`: v0, kappa, theta, sigma_v, rho)\n"
+            "- `cev` — CEV-to-BS vol mapping via Hagan-Woodward approximation "
+            "(requires `model_params`: sigma, beta)"
+        ),
+    )
+    model_params: Optional[dict] = Field(
+        None,
+        description=(
+            "[implied] Parameters for parametric vol models (sabr / svi / heston / cev). "
+            "Not used when vol_type is log_normal or normal."
+        ),
     )
     initial_guess: float = Field(0.2, description="[implied] Starting vol for the Newton-Raphson solver.")
     tolerance: float = Field(1e-6, description="[implied] Solver convergence tolerance on price error.")
@@ -197,12 +213,25 @@ class VolatilityRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_required(self):
+        _PARAMETRIC = {"sabr", "svi", "heston", "cev"}
         if self.type == "implied":
-            required = ["option_price", "option_type", "spot", "strike", "rate", "settlement_date", "expiry_date"]
-            missing = [f for f in required if getattr(self, f) is None]
-            if missing:
-                raise ValueError(f"Missing required fields for implied vol: {missing}")
-            if self.expiry_date <= self.settlement_date:
+            # Parametric models evaluate the vol directly from model params — no market price needed.
+            if self.vol_type in _PARAMETRIC:
+                required = ["spot", "strike", "rate", "settlement_date", "expiry_date"]
+                missing = [f for f in required if getattr(self, f) is None]
+                if missing:
+                    raise ValueError(f"Missing required fields for parametric vol_type='{self.vol_type}': {missing}")
+                if not self.model_params:
+                    raise ValueError(
+                        f"'model_params' is required when vol_type='{self.vol_type}'. "
+                        f"Provide the model parameters as a dict."
+                    )
+            else:
+                required = ["option_price", "option_type", "spot", "strike", "rate", "settlement_date", "expiry_date"]
+                missing = [f for f in required if getattr(self, f) is None]
+                if missing:
+                    raise ValueError(f"Missing required fields for implied vol: {missing}")
+            if self.settlement_date and self.expiry_date and self.expiry_date <= self.settlement_date:
                 raise ValueError("expiry_date must be after settlement_date")
         else:
             if not self.prices:
@@ -220,8 +249,9 @@ class ConvergenceInfo(BaseModel):
 
 class VolatilityResponse(BaseModel):
     volatility: float
-    type: str
-    time_to_expiry_days: Optional[int] = Field(None, description="[implied] Calendar days from settlement to expiry.")
+    type: str = Field(..., description="'implied', 'model', or 'historical'.")
+    vol_model: Optional[str] = Field(None, description="Vol model used: log_normal, normal, sabr, svi, heston, or cev.")
+    time_to_expiry_days: Optional[int] = Field(None, description="[implied/model] Calendar days from settlement to expiry.")
     convergence: Optional[ConvergenceInfo] = None
     insights: Optional[dict] = None
 

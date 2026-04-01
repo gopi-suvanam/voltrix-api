@@ -8,6 +8,7 @@ from app.config import settings
 from app.routes.options import router as options_router
 from app.routes.bonds import router as bonds_router
 from app.routes.core_finance import router as core_router
+from app.routes.calibration import router as calibration_router
 
 _tags_metadata = [
     {
@@ -16,6 +17,15 @@ _tags_metadata = [
             "Price European options, compute Greeks, back-solve implied volatility, "
             "and analyse multi-leg strategies. Time-to-expiry is always derived from "
             "`settlement_date` + `expiry_date` — no raw year-fractions required."
+        ),
+    },
+    {
+        "name": "Calibration",
+        "description": (
+            "Fit volatility model parameters to market option prices. "
+            "Supports SABR, SVI, Heston, and CEV models. "
+            "Calibrated parameters can be used directly in `/options/price`, "
+            "`/options/greeks`, and `/options/volatility` endpoints."
         ),
     },
     {
@@ -50,8 +60,14 @@ app = FastAPI(
         "`day_count` convention.\n\n"
         "## Volatility input (options)\n"
         "The `volatility` field accepts a scalar (e.g. `0.2` for 20%) or a full "
-        "`VolatilityInput` object supporting constant or bilinear-interpolated "
-        "matrix (vol-surface) configurations."
+        "`VolatilityInput` object supporting five surface types: `constant`, `matrix` "
+        "(bilinear interpolation), `sabr`, `svi`, and `heston`.\n\n"
+        "## Volatility calibration\n"
+        "The `/options/calibration/*` endpoints fit SABR, SVI, Heston, and CEV model "
+        "parameters to observed market option prices. Calibrated parameters can be passed "
+        "directly into `/options/price`, `/options/greeks`, and `/options/volatility`.\n\n"
+        "## Full reference\n"
+        "Extended documentation with examples: `GET /docs.md`"
     ),
     version="2.0.0",
     openapi_tags=_tags_metadata,
@@ -68,9 +84,10 @@ _auth = [Depends(verify_token)]
 
 _v = settings.api_version
 
-app.include_router(options_router, prefix=f"/{_v}", dependencies=_auth)
-app.include_router(bonds_router,   prefix=f"/{_v}", dependencies=_auth)
-app.include_router(core_router,    prefix=f"/{_v}", dependencies=_auth)
+app.include_router(options_router,      prefix=f"/{_v}", dependencies=_auth)
+app.include_router(bonds_router,        prefix=f"/{_v}", dependencies=_auth)
+app.include_router(core_router,         prefix=f"/{_v}", dependencies=_auth)
+app.include_router(calibration_router,  prefix=f"/{_v}", dependencies=_auth)
 
 
 @app.exception_handler(HTTPException)

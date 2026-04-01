@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+import math
+
+from fastapi import APIRouter, HTTPException
 
 from ..models.options import (
     OptionPriceRequest, OptionPriceResponse,
@@ -14,6 +16,19 @@ from ..core.greeks import compute_greeks
 from ..core.vol_engine import implied_vol, historical_vol
 from ..core.insights import option_price_insights, greeks_insights, vol_insights
 from ..core.strategies import analyze_strategy
+from ..core.sabr import sabr_implied_vol
+from ..core.svi import svi_implied_vol
+from ..core.calibration import cev_bs_approximation
+
+_PARAMETRIC_VOL_TYPES = {"sabr", "svi", "heston", "cev"}
+
+# Required model_params keys per parametric vol_type
+_PARAMETRIC_REQUIRED_KEYS: dict[str, list[str]] = {
+    "sabr":   ["alpha", "beta", "rho", "nu"],
+    "svi":    ["a", "b", "rho", "m", "sigma"],
+    "heston": ["v0", "kappa", "theta", "sigma_v", "rho"],
+    "cev":    ["sigma", "beta"],
+}
 
 router = APIRouter(prefix="/options", tags=["Options"])
 
@@ -169,11 +184,19 @@ def compute_greeks_endpoint(req: GreeksRequest):
 @router.post(
     "/volatility",
     response_model=VolatilityResponse,
-    summary="Compute implied or historical volatility",
+    summary="Compute implied, model, or historical volatility",
     description=(
-        "**`implied`** — Newton-Raphson solver to back out the vol that prices a "
-        "Black-Scholes (log-normal) or Bachelier (normal) option to the observed market price. "
+        "**`implied` + `vol_type=log_normal`** — Newton-Raphson back-solver using Black-Scholes. "
         "Requires: `option_price`, `option_type`, `spot`, `strike`, `rate`, `settlement_date`, `expiry_date`.\n\n"
+        "**`implied` + `vol_type=normal`** — Newton-Raphson back-solver using Bachelier. Same required fields.\n\n"
+        "**`implied` + `vol_type=sabr|svi|heston|cev`** — Evaluate the model's implied vol directly "
+        "at the given (K, T) using the supplied `model_params`. No market price needed.\n\n"
+        "| vol_type | Required model_params keys |\n"
+        "|----------|----------------------------|\n"
+        "| `sabr`   | alpha, beta, rho, nu |\n"
+        "| `svi`    | a, b, rho, m, sigma |\n"
+        "| `heston` | v0, kappa, theta, sigma_v, rho |\n"
+        "| `cev`    | sigma, beta |\n\n"
         "**`historical`** — Realised vol from a price series, annualised by `annualization_factor`. "
         "Requires: `prices` (≥ 2 values)."
     ),
@@ -182,30 +205,93 @@ def compute_volatility(req: VolatilityRequest):
     if req.type == "implied":
         T = year_fraction(req.settlement_date, req.expiry_date, req.day_count)
         days = (req.expiry_date - req.settlement_date).days
-        sigma, iterations, error, status = implied_vol(
-            market_price=req.option_price,
-            S=req.spot,
-            K=req.strike,
-            T=T,
-            r=req.rate,
-            q=req.dividend_yield,
-            option_type=req.option_type,
-            vol_type=req.vol_type,
-            initial_guess=req.initial_guess,
-            tolerance=req.tolerance,
-            max_iterations=req.max_iterations,
-        )
-        return VolatilityResponse(
-            volatility=round(sigma, 8),
-            type="implied",
-            time_to_expiry_days=days,
-            convergence=ConvergenceInfo(
-                iterations=iterations,
-                error=round(error, 10),
-                status=status,
-            ),
-            insights=vol_insights(sigma),
-        )
+
+        if req.vol_type in _PARAMETRIC_VOL_TYPES:
+            # Evaluate the parametric model's implied vol directly at (K, T).
+            params = req.model_params or {}
+            required_keys = _PARAMETRIC_REQUIRED_KEYS[req.vol_type]
+            missing = [k for k in required_keys if k not in params]
+            if missing:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "INVALID_INPUT",
+                        "message": f"vol_type='{req.vol_type}' requires model_params keys: {missing}",
+                    },
+                )
+
+            F = req.spot * math.exp((req.rate - req.dividend_yield) * T)
+
+            if req.vol_type == "sabr":
+                sigma = sabr_implied_vol(
+                    F, req.strike, T,
+                    float(params["alpha"]),
+                    float(params["beta"]),
+                    float(params["rho"]),
+                    float(params["nu"]),
+                )
+                vol_source = "sabr"
+
+            elif req.vol_type == "svi":
+                sigma = svi_implied_vol(
+                    F, req.strike, T,
+                    float(params["a"]),
+                    float(params["b"]),
+                    float(params["rho"]),
+                    float(params["m"]),
+                    float(params["sigma"]),
+                )
+                vol_source = "svi"
+
+            elif req.vol_type == "heston":
+                # Reference vol is √v₀; actual Heston pricing uses the full parameter set.
+                sigma = math.sqrt(float(params["v0"]))
+                vol_source = "heston"
+
+            else:  # cev
+                sigma = cev_bs_approximation(
+                    F, req.strike, T,
+                    float(params["sigma"]),
+                    float(params["beta"]),
+                )
+                vol_source = "cev"
+
+            return VolatilityResponse(
+                volatility=round(sigma, 8),
+                type="model",
+                vol_model=req.vol_type,
+                time_to_expiry_days=days,
+                convergence=None,
+                insights=vol_insights(sigma),
+            )
+
+        else:
+            # Back-solve from observed market price (log_normal / normal).
+            sigma, iterations, error, status = implied_vol(
+                market_price=req.option_price,
+                S=req.spot,
+                K=req.strike,
+                T=T,
+                r=req.rate,
+                q=req.dividend_yield,
+                option_type=req.option_type,
+                vol_type=req.vol_type,
+                initial_guess=req.initial_guess,
+                tolerance=req.tolerance,
+                max_iterations=req.max_iterations,
+            )
+            return VolatilityResponse(
+                volatility=round(sigma, 8),
+                type="implied",
+                vol_model=req.vol_type,
+                time_to_expiry_days=days,
+                convergence=ConvergenceInfo(
+                    iterations=iterations,
+                    error=round(error, 10),
+                    status=status,
+                ),
+                insights=vol_insights(sigma),
+            )
     else:
         sigma = historical_vol(
             prices=req.prices,
@@ -216,6 +302,7 @@ def compute_volatility(req: VolatilityRequest):
         return VolatilityResponse(
             volatility=round(sigma, 8),
             type="historical",
+            vol_model=None,
             time_to_expiry_days=None,
             convergence=None,
             insights=vol_insights(sigma),
