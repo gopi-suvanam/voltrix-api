@@ -18,6 +18,9 @@ scipy==1.15.1
 httpx==0.28.1
 httpcore==1.0.9
 
+# Markdown rendering
+markdown==3.7
+
 # Utilities
 python-dotenv==1.0.1
 typing_extensions==4.15.0
