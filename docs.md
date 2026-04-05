@@ -1,30 +1,10 @@
 # Voltrix API — Reference
 
 **Version:** 2.0.0
-**Base URL:** `http://localhost:8000/v2`
-**Interactive UI:** `http://localhost:8000/docs` (Swagger)
+**Base URL:** `/{api_version}` (e.g. `/v2`)
+**Interactive UI:** `/docs` (Swagger)
 
----
 
-## Authentication
-
-Auth is **disabled by default** (development mode). To enable it, create `config.env`:
-
-```
-API_TOKEN_HASH=<sha256-hex-of-your-token>
-```
-
-Generate a token with:
-
-```bash
-python generate_token.py
-```
-
-When auth is active, every request must include:
-
-```
-Authorization: Bearer <token>
-```
 
 ---
 
@@ -1207,3 +1187,82 @@ the semi-analytic result. Both should agree within a few basis points.
 The raw SVI parametrisation `w(k) = a + b·(ρ·(k−m) + √((k−m)²+σ²))` is free of butterfly
 arbitrage when `a + b·σ·√(1−ρ²) ≥ 0`. Calendar-spread arbitrage requires additional checks
 across maturities that are not automatically enforced.
+
+
+---
+
+## Performance Benchmarks
+
+Average response times measured at the core computation layer (excludes HTTP overhead).
+
+### Options Pricing
+
+| Endpoint | Avg |
+|---|---|
+| Black-Scholes (call/put) | 0.05 ms |
+| Bachelier | 0.06 ms |
+| Monte Carlo GBM (10k paths) | 0.12 ms |
+| Monte Carlo GBM (100k paths) | 1.21 ms |
+| CEV (beta=0.5, 10k MC paths) | 29 ms |
+| Heston semi-analytic | 3.2 ms |
+| Heston MC (10k paths) | 67 ms |
+
+### Greeks
+
+| Endpoint | Avg |
+|---|---|
+| Black-Scholes analytic | 0.18 ms |
+| Black-Scholes finite-difference | 0.39 ms |
+| Monte Carlo numerical (10k paths) | 1.0 ms |
+| Heston numerical (semi-analytic) | 22 ms |
+| CEV numerical (10k MC paths) | 234 ms |
+
+### Volatility
+
+| Endpoint | Avg |
+|---|---|
+| Implied vol (BS log-normal) | 0.20 ms |
+| SABR implied vol | < 0.01 ms |
+| SVI implied vol | < 0.01 ms |
+| Vol surface resolve (constant) | < 0.01 ms |
+| Vol surface resolve (matrix interp) | 0.04 ms |
+| Vol surface resolve (SABR) | < 0.01 ms |
+
+### Strategies
+
+| Endpoint | Avg |
+|---|---|
+| Bull call spread (2 legs) | 0.05 ms |
+| Iron condor (4 legs) | 0.06 ms |
+| Butterfly (4 legs) | 0.07 ms |
+
+### Bonds
+
+| Endpoint | Avg |
+|---|---|
+| Bond price (5yr semi-annual) | 0.02 ms |
+| Bond price (30yr semi-annual) | 0.12 ms |
+| Yield solve (5yr) | 0.04 ms |
+| Yield solve (10yr) | 0.06 ms |
+| Yield solve (30yr) | 0.14 ms |
+| Duration/convexity (5yr) | 0.02 ms |
+| Duration/convexity (30yr) | 0.08 ms |
+
+### Core Finance
+
+| Endpoint | Avg |
+|---|---|
+| NPV (5 cashflows) | 0.01 ms |
+| NPV (60 cashflows) | 0.05 ms |
+| PMT (monthly, 30yr) | < 0.01 ms |
+
+### Calibration
+
+| Endpoint | 7 obs | 20 obs |
+|---|---|---|
+| SABR | 22 ms | 29 ms |
+| SVI | 11 ms | 8 ms |
+| CEV | 59 ms | 47 ms |
+| Heston | 7.5 s | 8.8 s |
+
+Heston calibration uses differential evolution (global optimizer) with vectorized Gauss-Legendre quadrature pricing. All other calibrators use vectorized NumPy loss functions with L-BFGS-B.

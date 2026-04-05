@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import date
+import numpy as np
 from .day_count import add_months, year_fraction
 
 _FREQ_MONTHS: dict[str, int] = {
@@ -116,18 +117,31 @@ def solve_yield(
     ai = accrued_interest(settlement, maturity, coupon_rate, face_value, freq, day_count)
     target_dirty = clean_price + ai
 
+    # Pre-compute coupon schedule once (avoid rebuilding every iteration)
+    freq_per_year = _FREQ_PER_YEAR[freq]
+    coupon_per_period = face_value * coupon_rate / freq_per_year
+    cpn_dates = _coupon_dates(settlement, maturity, freq)
+    t_arr = np.array([year_fraction(settlement, d, day_count) for d in cpn_dates])
+    cf_arr = np.array([
+        coupon_per_period + (face_value if d == maturity else 0.0)
+        for d in cpn_dates
+    ])
+    tf_arr = t_arr * freq_per_year  # pre-compute t * freq for exponent
+
     ytm = initial_guess
 
     for i in range(max_iterations):
-        p = _dirty_price(settlement, maturity, coupon_rate, face_value, freq, ytm, day_count)
+        # Vectorized dirty price + analytic derivative in one pass
+        base = 1.0 + ytm / freq_per_year
+        df = base ** (-tf_arr)
+        p = float(np.dot(cf_arr, df))
         err = p - target_dirty
         if abs(err) < tolerance:
             return ytm, i + 1, "converged"
 
-        dy = 1e-6
-        p_up = _dirty_price(settlement, maturity, coupon_rate, face_value, freq, ytm + dy, day_count)
-        p_dn = _dirty_price(settlement, maturity, coupon_rate, face_value, freq, ytm - dy, day_count)
-        dpdytm = (p_up - p_dn) / (2.0 * dy)
+        # Analytic derivative: dP/dy = sum(-tf/freq * cf * (1+y/freq)^(-tf-1) * 1/freq)
+        #                            = -1/freq * sum(tf/freq * cf * df / (1+y/freq))
+        dpdytm = float(np.dot(-tf_arr / freq_per_year * cf_arr, df / base))
 
         if abs(dpdytm) < 1e-14:
             break
@@ -152,19 +166,20 @@ def duration_convexity(
     coupon_per_period = face_value * coupon_rate / freq_per_year
     cpn_dates = _coupon_dates(settlement, maturity, freq)
 
-    mac_num = 0.0
-    convex_num = 0.0
+    t_arr = np.array([year_fraction(settlement, d, day_count) for d in cpn_dates])
+    cf_arr = np.array([
+        coupon_per_period + (face_value if d == maturity else 0.0)
+        for d in cpn_dates
+    ])
 
-    for d in cpn_dates:
-        t = year_fraction(settlement, d, day_count)
-        cf = coupon_per_period + (face_value if d == maturity else 0.0)
-        df = (1.0 + ytm / freq_per_year) ** (-t * freq_per_year)
-        pv = cf * df
-        mac_num += t * pv
-        convex_num += t * (t + 1.0 / freq_per_year) * pv
+    one_plus_y = 1.0 + ytm / freq_per_year
+    df_arr = one_plus_y ** (-t_arr * freq_per_year)
+    pv_arr = cf_arr * df_arr
+
+    mac_num = float(np.dot(t_arr, pv_arr))
+    convex_num = float(np.dot(t_arr * (t_arr + 1.0 / freq_per_year), pv_arr))
 
     macaulay = mac_num / dirty_price
-    one_plus_y = 1.0 + ytm / freq_per_year
     modified = macaulay / one_plus_y
     convexity = convex_num / (dirty_price * one_plus_y ** 2)
 

@@ -13,9 +13,9 @@ import numpy as np
 from scipy.optimize import minimize, differential_evolution
 from typing import Any
 
-from .sabr import sabr_implied_vol
-from .svi import svi_implied_vol
-from .heston import heston_price
+from .sabr import sabr_implied_vol, sabr_implied_vol_batch
+from .svi import svi_implied_vol, svi_implied_vol_batch
+from .heston import heston_price, heston_price_batch
 from .vol_engine import implied_vol as _solve_iv
 
 
@@ -95,6 +95,35 @@ def cev_bs_approximation(F: float, K: float, T: float, sigma: float, beta: float
     return max(float(vol), 1e-6)
 
 
+def _cev_bs_approx_batch(
+    Fs: np.ndarray, Ks: np.ndarray, Ts: np.ndarray,
+    sigma: float, beta: float,
+) -> np.ndarray:
+    """Vectorized Hagan-Woodward CEV→BS implied vol approximation."""
+    beta = float(np.clip(beta, 0.0, 1.0))
+    one_m_beta = 1.0 - beta
+    eps_arr = np.log(Fs / Ks)
+    FK_mid = (Fs * Ks) ** (one_m_beta / 2.0)
+
+    time_corr = 1.0 + (
+        one_m_beta ** 2 / 24.0 * sigma ** 2 / (FK_mid ** 2 + 1e-30)
+        + one_m_beta ** 2 / 24.0
+    ) * Ts
+
+    is_atm = np.abs(eps_arr) < 1e-7
+
+    # ATM
+    atm_vol = (sigma / FK_mid) * time_corr
+
+    # Non-ATM
+    denom = (1.0
+             + (one_m_beta ** 2 / 24.0) * eps_arr ** 2
+             + (one_m_beta ** 4 / 1920.0) * eps_arr ** 4)
+    non_atm_vol = sigma / (FK_mid * denom) * time_corr
+
+    return np.maximum(np.where(is_atm, atm_vol, non_atm_vol), 1e-6)
+
+
 # ── SABR calibration ──────────────────────────────────────────────────────────
 
 def calibrate_sabr(
@@ -119,19 +148,21 @@ def calibrate_sabr(
 
     beta = float(np.clip(beta, 0.0, 1.0))
 
+    # Pre-extract arrays for vectorized loss
+    Ks_arr = np.array([x[0] for x in ivols])
+    Ts_arr = np.array([x[1] for x in ivols])
+    iv_mkts = np.array([x[3] for x in ivols])
+    Fs_arr = S * np.exp((r - q) * Ts_arr)
+
     def loss(params: np.ndarray) -> float:
         alpha, rho, nu = params
         if alpha <= 0 or nu < 0 or abs(rho) >= 1:
             return 1e10
-        total = 0.0
-        for K, T, _, iv_mkt in ivols:
-            F = S * np.exp((r - q) * T)
-            try:
-                iv_m = sabr_implied_vol(F, K, T, alpha, beta, rho, nu)
-                total += (iv_m - iv_mkt) ** 2
-            except Exception:
-                total += 1.0
-        return total
+        try:
+            iv_model = sabr_implied_vol_batch(Fs_arr, Ks_arr, Ts_arr, alpha, beta, rho, nu)
+            return float(np.sum((iv_model - iv_mkts) ** 2))
+        except Exception:
+            return 1e10
 
     bounds = [(1e-4, 5.0), (-0.999, 0.999), (1e-4, 5.0)]
     starts = [[0.3, -0.3, 0.4], [0.5, 0.0, 0.6], [0.1, -0.6, 0.2], [0.4, 0.2, 0.5]]
@@ -142,21 +173,15 @@ def calibrate_sabr(
             best = res
 
     alpha, rho, nu = best.x
-    sq_errors = []
-    for K, T, _, iv_mkt in ivols:
-        F = S * np.exp((r - q) * T)
-        try:
-            iv_m = sabr_implied_vol(F, K, T, alpha, beta, rho, nu)
-            sq_errors.append((iv_m - iv_mkt) ** 2)
-        except Exception:
-            pass
+    iv_final = sabr_implied_vol_batch(Fs_arr, Ks_arr, Ts_arr, alpha, beta, rho, nu)
+    sq_errors = (iv_final - iv_mkts) ** 2
 
     return {
         "alpha": float(alpha),
         "beta": float(beta),
         "rho": float(rho),
         "nu": float(nu),
-        "rmse": float(np.sqrt(np.mean(sq_errors))) if sq_errors else None,
+        "rmse": float(np.sqrt(np.mean(sq_errors))),
         "n_observations": len(ivols),
         "converged": bool(best.success),
         "message": str(best.message),
@@ -183,35 +208,31 @@ def calibrate_svi(
             f"(got {len(ivols)} after implied-vol extraction)"
         )
 
+    # Pre-extract arrays for vectorized loss
+    Ks_arr = np.array([x[0] for x in ivols])
+    Ts_arr = np.array([x[1] for x in ivols])
+    iv_mkts = np.array([x[3] for x in ivols])
+    Fs_arr = S * np.exp((r - q) * Ts_arr)
+
     def loss(params: np.ndarray) -> float:
         a, b, rho, m, sigma = params
         if b < 0 or sigma <= 0 or abs(rho) >= 1:
             return 1e10
         if a + b * sigma * np.sqrt(1.0 - rho ** 2) < 0:
             return 1e10
-        total = 0.0
-        for K, T, _, iv_mkt in ivols:
-            F = S * np.exp((r - q) * T)
-            try:
-                iv_m = svi_implied_vol(F, K, T, a, b, rho, m, sigma)
-                total += (iv_m - iv_mkt) ** 2
-            except Exception:
-                total += 1.0
-        return total
+        try:
+            iv_model = svi_implied_vol_batch(Fs_arr, Ks_arr, Ts_arr, a, b, rho, m, sigma)
+            return float(np.sum((iv_model - iv_mkts) ** 2))
+        except Exception:
+            return 1e10
 
     bounds = [(0.0, 2.0), (0.0, 2.0), (-0.999, 0.999), (-3.0, 3.0), (1e-4, 2.0)]
     x0 = [0.01, 0.1, -0.3, 0.0, 0.1]
     res = minimize(loss, x0, method="L-BFGS-B", bounds=bounds, options={"maxiter": 3000})
 
     a, b, rho, m, sigma = res.x
-    sq_errors = []
-    for K, T, _, iv_mkt in ivols:
-        F = S * np.exp((r - q) * T)
-        try:
-            iv_m = svi_implied_vol(F, K, T, a, b, rho, m, sigma)
-            sq_errors.append((iv_m - iv_mkt) ** 2)
-        except Exception:
-            pass
+    iv_final = svi_implied_vol_batch(Fs_arr, Ks_arr, Ts_arr, a, b, rho, m, sigma)
+    sq_errors = (iv_final - iv_mkts) ** 2
 
     return {
         "a": float(a),
@@ -219,7 +240,7 @@ def calibrate_svi(
         "rho": float(rho),
         "m": float(m),
         "sigma": float(sigma),
-        "rmse": float(np.sqrt(np.mean(sq_errors))) if sq_errors else None,
+        "rmse": float(np.sqrt(np.mean(sq_errors))),
         "n_observations": len(ivols),
         "converged": bool(res.success),
         "message": str(res.message),
@@ -242,45 +263,46 @@ def calibrate_heston(
     if len(observations) < 5:
         raise ValueError("Heston calibration requires at least 5 option price observations")
 
+    # Pre-extract arrays once for vectorized pricing
+    Ks = np.array([o["strike"] for o in observations])
+    Ts = np.array([o["T"] for o in observations])
+    opt_types = [o["option_type"] for o in observations]
+    p_mkts = np.array([o["market_price"] for o in observations])
+
     def loss(params: np.ndarray) -> float:
         v0, kappa, theta, sigma_v, rho = params
         if v0 <= 0 or kappa <= 0 or theta <= 0 or sigma_v <= 0 or abs(rho) >= 1:
             return 1e10
-        total = 0.0
-        for obs in observations:
-            K, T, opt, p_mkt = obs["strike"], obs["T"], obs["option_type"], obs["market_price"]
-            try:
-                p_m = heston_price(S, K, T, r, q, v0, kappa, theta, sigma_v, rho, opt)
-                total += (p_m - p_mkt) ** 2
-            except Exception:
-                total += p_mkt ** 2
-        return total
+        try:
+            prices = heston_price_batch(S, Ks, Ts, r, q, v0, kappa, theta, sigma_v, rho, opt_types)
+            val = float(np.sum((prices - p_mkts) ** 2))
+            return val if np.isfinite(val) else 1e10
+        except Exception:
+            return 1e10
 
     bounds = [(1e-4, 2.0), (0.01, 20.0), (1e-4, 2.0), (0.01, 3.0), (-0.999, 0.999)]
 
-    res_de = differential_evolution(
-        loss, bounds, maxiter=300, seed=42, tol=1e-7, polish=True, workers=1
+    # polish=True already runs L-BFGS-B after DE, no need for a second pass
+    best = differential_evolution(
+        loss, bounds, maxiter=300, seed=42, tol=1e-6, polish=True, workers=1
     )
-    res_lbfgs = minimize(loss, res_de.x, method="L-BFGS-B", bounds=bounds, options={"maxiter": 1000})
-    best = res_lbfgs if res_lbfgs.fun <= res_de.fun else res_de
 
     v0, kappa, theta, sigma_v, rho = best.x
-    sq_errors = []
-    for obs in observations:
-        K, T, opt, p_mkt = obs["strike"], obs["T"], obs["option_type"], obs["market_price"]
-        try:
-            p_m = heston_price(S, K, T, r, q, v0, kappa, theta, sigma_v, rho, opt)
-            sq_errors.append((p_m - p_mkt) ** 2)
-        except Exception:
-            pass
+    final_prices = heston_price_batch(S, Ks, Ts, r, q, v0, kappa, theta, sigma_v, rho, opt_types)
+    sq_errors = (final_prices - p_mkts) ** 2
+    rmse = float(np.sqrt(np.mean(sq_errors)))
+
+    # Sanitize: replace any NaN/Inf with 0.0 so the result is JSON-serializable
+    def _safe(x: float) -> float:
+        return 0.0 if not np.isfinite(x) else x
 
     return {
-        "v0": float(v0),
-        "kappa": float(kappa),
-        "theta": float(theta),
-        "sigma_v": float(sigma_v),
-        "rho": float(rho),
-        "rmse": float(np.sqrt(np.mean(sq_errors))) if sq_errors else None,
+        "v0": _safe(float(v0)),
+        "kappa": _safe(float(kappa)),
+        "theta": _safe(float(theta)),
+        "sigma_v": _safe(float(sigma_v)),
+        "rho": _safe(float(rho)),
+        "rmse": _safe(rmse),
         "n_observations": len(observations),
         "converged": bool(best.success),
         "feller_condition_satisfied": bool(2.0 * kappa * theta > sigma_v ** 2),
@@ -308,19 +330,21 @@ def calibrate_cev(
             f"(got {len(ivols)} after implied-vol extraction)"
         )
 
+    # Pre-extract arrays for vectorized loss
+    Ks_arr = np.array([x[0] for x in ivols])
+    Ts_arr = np.array([x[1] for x in ivols])
+    iv_mkts = np.array([x[3] for x in ivols])
+    Fs_arr = S * np.exp((r - q) * Ts_arr)
+
     def loss(params: np.ndarray) -> float:
         sigma, beta = params
         if sigma <= 0 or beta < 0 or beta > 1:
             return 1e10
-        total = 0.0
-        for K, T, _, iv_mkt in ivols:
-            F = S * np.exp((r - q) * T)
-            try:
-                iv_m = cev_bs_approximation(F, K, T, sigma, beta)
-                total += (iv_m - iv_mkt) ** 2
-            except Exception:
-                total += 1.0
-        return total
+        try:
+            iv_model = _cev_bs_approx_batch(Fs_arr, Ks_arr, Ts_arr, sigma, beta)
+            return float(np.sum((iv_model - iv_mkts) ** 2))
+        except Exception:
+            return 1e10
 
     bounds = [(1e-4, 10.0), (0.0, 1.0)]
     starts = [[0.3, 0.5], [0.2, 0.8], [0.5, 0.3], [0.15, 0.6]]
@@ -331,19 +355,13 @@ def calibrate_cev(
             best = res
 
     sigma, beta = best.x
-    sq_errors = []
-    for K, T, _, iv_mkt in ivols:
-        F = S * np.exp((r - q) * T)
-        try:
-            iv_m = cev_bs_approximation(F, K, T, sigma, beta)
-            sq_errors.append((iv_m - iv_mkt) ** 2)
-        except Exception:
-            pass
+    iv_final = _cev_bs_approx_batch(Fs_arr, Ks_arr, Ts_arr, sigma, beta)
+    sq_errors = (iv_final - iv_mkts) ** 2
 
     return {
         "sigma": float(sigma),
         "beta": float(beta),
-        "rmse": float(np.sqrt(np.mean(sq_errors))) if sq_errors else None,
+        "rmse": float(np.sqrt(np.mean(sq_errors))),
         "n_observations": len(ivols),
         "converged": bool(best.success),
         "message": str(best.message),

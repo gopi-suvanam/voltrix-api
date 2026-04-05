@@ -1,7 +1,43 @@
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+
+import json
+import math
+import markdown
+
+
+class _SafeJSONEncoder(json.JSONEncoder):
+    """Replace NaN/Inf with None so responses are always valid JSON."""
+    def default(self, o):
+        return super().default(o)
+
+    def encode(self, o):
+        return super().encode(_sanitize(o))
+
+
+def _sanitize(obj):
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize(v) for v in obj]
+    return obj
+
+
+class SafeJSONResponse(JSONResponse):
+    def render(self, content) -> bytes:
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            cls=_SafeJSONEncoder,
+        ).encode("utf-8")
+
+
+
 
 from app.auth import verify_token
 from app.config import settings
@@ -46,6 +82,7 @@ _tags_metadata = [
 ]
 
 app = FastAPI(
+    default_response_class=SafeJSONResponse,
     title="Voltrix API",
     description=(
         "A unified financial computation engine with time-aware modelling.\n\n"
@@ -136,3 +173,18 @@ def health():
 @app.get("/docs.md", include_in_schema=False)
 def serve_docs():
     return FileResponse("docs.md", media_type="text/markdown")
+    
+@app.get("/docs.html", response_class=HTMLResponse, include_in_schema=False)
+def serve_docs_html():
+    with open("docs.md", "r", encoding="utf-8") as f:
+        md_content = f.read()
+
+    html_content = markdown.markdown(
+        md_content,
+        extensions=["tables", "fenced_code", "codehilite", "toc"],
+    )
+
+    with open("docs_template.html", "r", encoding="utf-8") as f:
+        template = f.read()
+
+    return template.replace("{{content}}", html_content)

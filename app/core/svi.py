@@ -59,3 +59,24 @@ def svi_implied_vol(
         )
 
     return float(np.sqrt(w / T))
+
+
+def svi_implied_vol_batch(
+    Fs: np.ndarray,
+    Ks: np.ndarray,
+    Ts: np.ndarray,
+    a: float,
+    b: float,
+    rho: float,
+    m: float,
+    sigma: float,
+) -> np.ndarray:
+    """
+    Vectorized raw SVI implied vol for arrays of (F, K, T).
+    Returns NaN where total variance w <= 0.
+    """
+    k = np.log(Ks / Fs)
+    w = a + b * (rho * (k - m) + np.sqrt((k - m) ** 2 + sigma ** 2))
+    # Clamp negative total variance to a tiny positive to avoid NaN in sqrt
+    w_safe = np.maximum(w, 1e-12)
+    return np.sqrt(w_safe / Ts)

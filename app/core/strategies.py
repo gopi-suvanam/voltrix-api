@@ -20,6 +20,23 @@ def _total_payoff(legs: list[dict], spot: float) -> float:
     return sum(_leg_payoff(leg, spot) for leg in legs)
 
 
+def _total_payoff_vec(legs: list[dict], spots: np.ndarray) -> np.ndarray:
+    """Vectorized total payoff for all legs across an array of spot prices."""
+    total = np.zeros_like(spots)
+    for leg in legs:
+        strike = leg["strike"]
+        premium = leg.get("premium", 0.0)
+        if leg["type"] == "call":
+            intrinsic = np.maximum(spots - strike, 0.0)
+        else:
+            intrinsic = np.maximum(strike - spots, 0.0)
+        if leg["position"] == "long":
+            total += intrinsic - premium
+        else:
+            total += -intrinsic + premium
+    return total
+
+
 def identify_strategy(legs: list[dict]) -> str:
     calls = [l for l in legs if l["type"] == "call"]
     puts = [l for l in legs if l["type"] == "put"]
@@ -76,31 +93,34 @@ def analyze_strategy(legs: list[dict], spot: float) -> dict:
 
     # Dense grid for payoff table and breakeven detection
     grid = np.linspace(lo, hi, 400)
-    payoffs = np.array([_total_payoff(legs, float(s)) for s in grid])
+    payoffs = _total_payoff_vec(legs, grid)
 
     max_p = float(payoffs.max())
     min_p = float(payoffs.min())
 
     # Check if payoff continues beyond our grid at extremes (unbounded)
-    far_right = _total_payoff(legs, hi * 20.0)
-    far_left = _total_payoff(legs, lo / 20.0)
+    extremes = _total_payoff_vec(legs, np.array([lo / 20.0, hi * 20.0]))
+    far_left, far_right = float(extremes[0]), float(extremes[1])
     max_profit: float | None = round(max_p, 4) if (far_right <= max_p + 0.01 and far_left <= max_p + 0.01) else None
     max_loss: float | None = round(min_p, 4) if (far_right >= min_p - 0.01 and far_left >= min_p - 0.01) else None
 
-    # Zero-crossing breakevens
+    # Zero-crossing breakevens (vectorized sign-change detection)
+    signs = payoffs[:-1] * payoffs[1:]
+    diffs = np.abs(payoffs[1:] - payoffs[:-1])
+    crossings = np.where((signs <= 0) & (diffs > 1e-12))[0]
     breakevens: list[float] = []
-    for i in range(len(grid) - 1):
+    for i in crossings:
         y0, y1 = float(payoffs[i]), float(payoffs[i + 1])
-        if y0 * y1 <= 0 and abs(y1 - y0) > 1e-12:
-            be = float(grid[i]) + (-y0) * (float(grid[i + 1]) - float(grid[i])) / (y1 - y0)
-            if not breakevens or abs(be - breakevens[-1]) > 0.05:
-                breakevens.append(round(be, 4))
+        be = float(grid[i]) + (-y0) * (float(grid[i + 1]) - float(grid[i])) / (y1 - y0)
+        if not breakevens or abs(be - breakevens[-1]) > 0.05:
+            breakevens.append(round(be, 4))
 
     # 20-point payoff sample for the response
     sample = np.linspace(lo, hi, 20)
+    sample_payoffs = _total_payoff_vec(legs, sample)
     payoff_table = [
-        {"spot": round(float(s), 2), "value": round(_total_payoff(legs, float(s)), 4)}
-        for s in sample
+        {"spot": round(float(s), 2), "value": round(float(v), 4)}
+        for s, v in zip(sample, sample_payoffs)
     ]
 
     return {
